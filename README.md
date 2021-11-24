@@ -5,7 +5,7 @@ Entry point code from [Hazel](https://github.com/TheCherno/Hazel)
 
 ## Screenshots
 
-![gif](https://i.imgur.com/sKhQ4X4.gif)
++<img src="/screenshots/E7VmlSvi1n.gif?raw=true" width="200px">
 Shader code from https://www.shadertoy.com/view/Xds3zN
 
 ## Libraries Used

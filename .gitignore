@@ -1,0 +1,24 @@
+# Binaries
+**/bin/
+bin-int/
+
+# Visual Studio files and folder
+.vs/
+**.sln
+**.vcxproj
+**.vcxproj.filters
+**.vcxproj.user
+
+# Directories
+CMakeFiles/
+Rui/CMakeFiles
+Rui/externals
+Rui/Rui.dir
+
+Sandbox/CMakeFiles
+Sandbox/externals
+Sandbox/Sandbox.dir
+
+vendor/
+
+x64/

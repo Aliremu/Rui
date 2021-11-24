@@ -14,10 +14,10 @@ Entry point code from [Hazel](https://github.com/TheCherno/Hazel)
 
 ## Installation
 
-Install Rui by running GenerateProjects.bat and open the genereated .sln file in Visual Studio Code
+Install Rui by running GenerateProjects.bat and open the generated .sln file in Visual Studio Code
 
 ```bash
-  sh GenerateProjects.sh
+$  sh GenerateProjects.sh
 ```
 
 ## License

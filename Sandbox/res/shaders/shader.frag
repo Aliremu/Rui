@@ -20,520 +20,644 @@ layout(push_constant) uniform Push {
 
 vec2 iResolution = vec2(1280, 720);
 
-// Distance Estimation
-// https://www.iquilezles.org/www/articles/distance/distance.htm
+// Copyright Inigo Quilez, 2016 - https://iquilezles.org/
+// I am the sole copyright owner of this Work.
+// You cannot host, display, distribute or share this Work in any form,
+// including physical and digital. You cannot use this Work in any
+// commercial or non-commercial product, website or project. You cannot
+// sell this Work and you cannot mint an NFTs of it.
+// I share this Work for educational purposes, and you can link to it,
+// through an URL, proper attribution and unmodified screenshot, as part
+// of your educational material. If these conditions are too restrictive
+// please contact me and we'll definitely work it out.
 
-// Rotate
-mat2 Rotate2D(float _angle)
+// A list of useful distance function to simple primitives. All
+// these functions (except for ellipsoid) return an exact
+// euclidean distance, meaning they produce a better SDF than
+// what you'd get if you were constructing them from boolean
+// operations (such as cutting an infinite cylinder with two planes).
+
+// List of other 3D SDFs:
+//    https://www.shadertoy.com/playlist/43cXRl
+// and
+//    http://iquilezles.org/www/articles/distfunctions/distfunctions.htm
+
+#if HW_PERFORMANCE==0
+#define AA 1
+#else
+#define AA 2   // make this 2 or 3 for antialiasing
+#endif
+
+//------------------------------------------------------------------
+float dot2( in vec2 v ) { return dot(v,v); }
+float dot2( in vec3 v ) { return dot(v,v); }
+float ndot( in vec2 a, in vec2 b ) { return a.x*b.x - a.y*b.y; }
+
+float sdPlane( vec3 p )
 {
-    return mat2(cos(_angle),-sin(_angle),
-                sin(_angle),cos(_angle));
+	return p.y;
 }
 
-// 2D distance functions
-// https://www.iquilezles.org/www/articles/distfunctions2d/distfunctions2d.htm
-// https://www.shadertoy.com/view/3ltSW2
-
-float SpikeyCircle(vec2 p, float points)
+float sdSphere( vec3 p, float s )
 {
-   vec2 st = vec2(atan(p.x, p.y + 0.1), length(p));
-
-  // float t = mod(st.x, 0.05);
-  // float t = st.x + st.y * 5.0;
-  float t = 1.0 - st.y * 0.2;
-
-  st = vec2(st.x / 6.2831 + 0.5 * t, st.y);
-
-  float x = st.x * points;
-  float m = min(fract(x), fract(1.0 - x));
-  float spikeLength = 0.7 - st.y;
-  float centerRadius = 0.25;
-  float c = smoothstep(0.0, 0.02, m * spikeLength + centerRadius - st.y);
-
-
-  return c;
-
+    return length(p)-s;
 }
 
-// Circle
-float sdCircle( vec2 p, float r )
+float sdBox( vec3 p, vec3 b )
 {
-  return smoothstep(0.01, 0.02, length(p) - r);
+    vec3 d = abs(p) - b;
+    return min(max(d.x,max(d.y,d.z)),0.0) + length(max(d,0.0));
 }
 
-/*
-float RotatedRectangle(vec2 st, vec2 size, float angle)
+float sdBoundingBox( vec3 p, vec3 b, float e )
 {
-  st = Rotate2D(angle) * st;
-  return Rectangle (st, size.x, size.y);
+       p = abs(p  )-b;
+  vec3 q = abs(p+e)-e;
 
-*/
-
-float sdBox( in vec2 p, in vec2 b )
+  return min(min(
+      length(max(vec3(p.x,q.y,q.z),0.0))+min(max(p.x,max(q.y,q.z)),0.0),
+      length(max(vec3(q.x,p.y,q.z),0.0))+min(max(q.x,max(p.y,q.z)),0.0)),
+      length(max(vec3(q.x,q.y,p.z),0.0))+min(max(q.x,max(q.y,p.z)),0.0));
+}
+float sdEllipsoid( in vec3 p, in vec3 r ) // approximated
 {
-    vec2 d = abs(p)-b;
-    return length(max(d,0.0)) + min(max(d.x,d.y),0.0);
+    float k0 = length(p/r);
+    float k1 = length(p/(r*r));
+    return k0*(k0-1.0)/k1;
 }
 
-float sdUnevenCapsule( vec2 p, float r1, float r2, float h )
+float sdTorus( vec3 p, vec2 t )
+{
+    return length( vec2(length(p.xz)-t.x,p.y) )-t.y;
+}
+
+float sdCappedTorus(in vec3 p, in vec2 sc, in float ra, in float rb)
 {
     p.x = abs(p.x);
+    float k = (sc.y*p.x>sc.x*p.y) ? dot(p.xy,sc) : length(p.xy);
+    return sqrt( dot(p,p) + ra*ra - 2.0*ra*k ) - rb;
+}
+
+float sdHexPrism( vec3 p, vec2 h )
+{
+    vec3 q = abs(p);
+
+    const vec3 k = vec3(-0.8660254, 0.5, 0.57735);
+    p = abs(p);
+    p.xy -= 2.0*min(dot(k.xy, p.xy), 0.0)*k.xy;
+    vec2 d = vec2(
+       length(p.xy - vec2(clamp(p.x, -k.z*h.x, k.z*h.x), h.x))*sign(p.y - h.x),
+       p.z-h.y );
+    return min(max(d.x,d.y),0.0) + length(max(d,0.0));
+}
+
+float sdOctogonPrism( in vec3 p, in float r, float h )
+{
+  const vec3 k = vec3(-0.9238795325,   // sqrt(2+sqrt(2))/2 
+                       0.3826834323,   // sqrt(2-sqrt(2))/2
+                       0.4142135623 ); // sqrt(2)-1 
+  // reflections
+  p = abs(p);
+  p.xy -= 2.0*min(dot(vec2( k.x,k.y),p.xy),0.0)*vec2( k.x,k.y);
+  p.xy -= 2.0*min(dot(vec2(-k.x,k.y),p.xy),0.0)*vec2(-k.x,k.y);
+  // polygon side
+  p.xy -= vec2(clamp(p.x, -k.z*r, k.z*r), r);
+  vec2 d = vec2( length(p.xy)*sign(p.y), p.z-h );
+  return min(max(d.x,d.y),0.0) + length(max(d,0.0));
+}
+
+float sdCapsule( vec3 p, vec3 a, vec3 b, float r )
+{
+	vec3 pa = p-a, ba = b-a;
+	float h = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
+	return length( pa - ba*h ) - r;
+}
+
+float sdRoundCone( in vec3 p, in float r1, float r2, float h )
+{
+    vec2 q = vec2( length(p.xz), p.y );
+    
     float b = (r1-r2)/h;
     float a = sqrt(1.0-b*b);
-    float k = dot(p,vec2(-b,a));
-    if( k < 0.0 ) return smoothstep(0.01, 0.02,length(p) - r1);
-    if( k > a*h ) return smoothstep(0.01, 0.02,length(p-vec2(0.0,h)) - r2);
-    return smoothstep(0.01, 0.02,dot(p, vec2(a,b) ) - r1);
+    float k = dot(q,vec2(-b,a));
+    
+    if( k < 0.0 ) return length(q) - r1;
+    if( k > a*h ) return length(q-vec2(0.0,h)) - r2;
+        
+    return dot(q, vec2(a,b) ) - r1;
 }
 
-// Segment
-
-// Segment - exact   (https://www.shadertoy.com/view/3tdSDj and https://www.youtube.com/watch?v=PMltMdi1Wzg)
-
-float sdSegment( in vec2 p, in vec2 a, in vec2 b, float thickness )
+float sdRoundCone(vec3 p, vec3 a, vec3 b, float r1, float r2)
 {
-    vec2 pa = p-a, ba = b-a;
-    float h = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
-    // return length( pa - ba*h );
-    return smoothstep(thickness - 0.003, thickness + 0.003,length( pa - ba*h ));
+    // sampling independent computations (only depend on shape)
+    vec3  ba = b - a;
+    float l2 = dot(ba,ba);
+    float rr = r1 - r2;
+    float a2 = l2 - rr*rr;
+    float il2 = 1.0/l2;
+    
+    // sampling dependant computations
+    vec3 pa = p - a;
+    float y = dot(pa,ba);
+    float z = y - l2;
+    float x2 = dot2( pa*l2 - ba*y );
+    float y2 = y*y*l2;
+    float z2 = z*z*l2;
+
+    // single square root!
+    float k = sign(rr)*rr*rr*x2;
+    if( sign(z)*a2*z2 > k ) return  sqrt(x2 + z2)        *il2 - r2;
+    if( sign(y)*a2*y2 < k ) return  sqrt(x2 + y2)        *il2 - r1;
+                            return (sqrt(x2*a2*il2)+y*rr)*il2 - r1;
 }
 
-float sdLineSegmentRounded(vec2 uv, vec2 a, vec2 b, float lineWidth)
+float sdTriPrism( vec3 p, vec2 h )
 {
-   uv *= 10.0;
-    vec2 pa = uv-a, ba = b-a;
-    float h = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
-    // return length( pa - ba*h ) - lineWidth*0.5;
-    float line = length( pa - ba*h ) - lineWidth*0.5;
-    line = smoothstep(line, line - lineWidth, 0.1);
-
-    return line;
+    const float k = sqrt(3.0);
+    h.x *= 0.5*k;
+    p.xy /= h.x;
+    p.x = abs(p.x) - 1.0;
+    p.y = p.y + 1.0/k;
+    if( p.x+k*p.y>0.0 ) p.xy=vec2(p.x-k*p.y,-k*p.x-p.y)/2.0;
+    p.x -= clamp( p.x, -2.0, 0.0 );
+    float d1 = length(p.xy)*sign(-p.y)*h.x;
+    float d2 = abs(p.z)-h.y;
+    return length(max(vec2(d1,d2),0.0)) + min(max(d1,d2), 0.);
 }
 
-// sca is the sin/cos of the orientation
-// scb is the sin/cos of the aperture
-float sdArc( in vec2 p, in vec2 sca, in vec2 scb, in float ra, in float rb )
+// vertical
+float sdCylinder( vec3 p, vec2 h )
 {
-    p *= mat2(sca.x,sca.y,-sca.y,sca.x);
-    p.x = abs(p.x);
-    float k = (scb.y*p.x>scb.x*p.y) ? dot(p.xy,scb) : length(p.xy);
-    return smoothstep(0.01, 0.015,sqrt( dot(p,p) + ra*ra - 2.0*ra*k ) - rb);
+    vec2 d = abs(vec2(length(p.xz),p.y)) - h;
+    return min(max(d.x,d.y),0.0) + length(max(d,0.0));
 }
 
-    
-// boolean operations                   
-// https://www.iquilezles.org/www/articles/distfunctions/distfunctions.htm
-
-
-float opUnion( float d1, float d2 ) {  return min(d1,d2); }
-
-float opSubtraction( float d1, float d2 ) { return max(-d1,d2); }
-
-float opIntersection( float d1, float d2 ) { return max(d1,d2); }
-
-#define PI 3.14
-#define TWO_PI 6.28
-
-// colors
-#define colorBackground vec3(253.0 / 255.0, 253.0 / 255.0, 93.0 / 255.0)
-#define colorBlack vec3(0.0)
-#define colorHair vec3(0.659, 0.894, 1.0)
-#define colorSkin vec3(227.0 / 255.0, 211.0 / 255.0, 195.0 / 255.0)
-#define colorShirt vec3(0.659, 0.94, 1.0)
-#define colorWhite vec3(1.0)
-#define colorVomit vec3(0.788, 0.914, 0.729) // rgb(78.8%,91.4%,72.9%)
-#define colorVomitBorder vec3(0.69, 0.855, 0.678)// 69% red, 85.5% green and 67.8% blue.
-
-/////////////////////////////// References ///////////////////////////////////////
-// The Amazing World of Gumball - Created by emmasteimann
-// https://www.shadertoy.com/view/WtfGWn
-
-// The art of code youtube series by Bigwings
-// https://www.youtube.com/channel/UCcAlTqd9zID6aNX3TzwxJXg
-// Smiley
-// https://www.shadertoy.com/view/lsXcWn
-
-// Inigo Quilez's youtube
-// https://youtu.be/0ifChJ0nJfM
-// and site
-// https://www.iquilezles.org/www/articles/distfunctions2d/distfunctions2d.htm
-
-
-
-// https://mortoray.com/2015/06/19/antialiasing-with-a-signed-distance-field/
-
-/*
-float DrawHair(vec2 uv)
+// arbitrary orientation
+float sdCylinder(vec3 p, vec3 a, vec3 b, float r)
 {
-    // uv *= -1.0;
-    // translate
-    uv.y -= 0.15;
-    // scale larger at top than bottom
-    uv.x *= uv.y - 0.99;
-  	return SpikeyCircle(uv, 11.0);
-}
-*/
-/*
-float shape(vec2 p) {
-  float r = length (p - vec2(0,.005) ) * 2.5 - .4,
-        a = atan(p.y + .07, p.x),
-        f = 1. - sin(mod(a * 6., 4.*.855) + a*.1) * .45,
-        w = .05;// w = fwidth(f); 
-  return smoothstep( -w, w, r - p.y*.5 - f );
+    vec3 pa = p - a;
+    vec3 ba = b - a;
+    float baba = dot(ba,ba);
+    float paba = dot(pa,ba);
+
+    float x = length(pa*baba-ba*paba) - r*baba;
+    float y = abs(paba-baba*0.5)-baba*0.5;
+    float x2 = x*x;
+    float y2 = y*y*baba;
+    float d = (max(x,y)<0.0)?-min(x2,y2):(((x>0.0)?x2:0.0)+((y>0.0)?y2:0.0));
+    return sign(d)*sqrt(abs(d))/baba;
 }
 
-vec3 drawHair(vec3 color, vec2 p)
+// vertical
+float sdCone( in vec3 p, in vec2 c, float h )
 {
-...
-  // best hair 
-  color = mix(colorBlack, color, shape(p)) ;         // outline 
-  return  mix(colorHair , color, shape(p*1.035) );   // fill 
-}
-*/
-
-// better hair, but messy and needs to be higher on the y direction to look right
-vec3 drawHair(vec3 color, vec2 p)
-{
-  // translate
-  p.x -= 0.02;
-  // scale
-  p *= 0.8;
-  // scale height
-  p.y *= 0.8;
-
-  float r = length(vec2(p.x, p.y - 0.005)) * 2.5 - 0.4;
-  float a = atan(p.y + 0.07, p.x);
-
-  // best hair
-  // outline
-  // float f = (1.0 - sin(mod(a * 6.0, 4.0 * (0.855)) + a * 0.1) * 0.45);
-  float f = (1.0 - sin(mod(a * 6.0, 4.0 * (0.855))) * 0.45);
-
-  f = smoothstep(f, f + 0.05, r - (p.y * 0.5));
+    vec2 q = h*vec2(c.x,-c.y)/c.y;
+    vec2 w = vec2( length(p.xz), p.y );
     
-  color = mix(colorBlack, color, f);
-    
-  // fill 
-  p *= 1.035;
-  r = length(vec2(p.x, p.y - 0.005)) * 2.5 - 0.4;
-  a = atan(p.y + 0.07, p.x);
-  f = (1.0 - sin(mod(a * 6.0, 4.0 * (0.85)) + a * 0.1) * 0.45);
-
-  f = smoothstep(f, f + 0.05, r - (p.y * 0.5));
-  color = mix(color, colorHair, 1.0 - f);
-    
-  return color;
+	vec2 a = w - q*clamp( dot(w,q)/dot(q,q), 0.0, 1.0 );
+    vec2 b = w - q*vec2( clamp( w.x/q.x, 0.0, 1.0 ), 1.0 );
+    float k = sign( q.y );
+    float d = min(dot( a, a ),dot(b, b));
+    float s = max( k*(w.x*q.y-w.y*q.x),k*(w.y-q.y)  );
+	return sqrt(d)*sign(s);
 }
 
-vec3 ears(vec3 color, vec2 p)
+float sdCappedCone( in vec3 p, in float h, in float r1, in float r2 )
 {
-    p = vec2(p.x - 0.35, p.y + 0.15);
-    float size = 0.1;
+    vec2 q = vec2( length(p.xz), p.y );
     
-    // Ears
-	float d = sdCircle(p, size);
-    color = mix(colorBlack, color, d);
-   
-    d = sdCircle(p * 1.09, size);
-   	color = mix(colorSkin, color, d);
-    
-    // Ears
-    p = vec2(p.x + 0.7, p.y);
-    
-	d = sdCircle(p, size);
-    color = mix(colorBlack, color, d);
-   
-    d = sdCircle(p * 1.09, size);
-   	color = mix(colorSkin, color, d);
-    return color;
+    vec2 k1 = vec2(r2,h);
+    vec2 k2 = vec2(r2-r1,2.0*h);
+    vec2 ca = vec2(q.x-min(q.x,(q.y < 0.0)?r1:r2), abs(q.y)-h);
+    vec2 cb = q - k1 + k2*clamp( dot(k1-q,k2)/dot2(k2), 0.0, 1.0 );
+    float s = (cb.x < 0.0 && ca.y < 0.0) ? -1.0 : 1.0;
+    return s*sqrt( min(dot2(ca),dot2(cb)) );
 }
 
-vec3 head(vec3 color, vec2 p)
+float sdCappedCone(vec3 p, vec3 a, vec3 b, float ra, float rb)
 {
-    // Head
-	float d = sdCircle(p,0.5);
-    color = mix(colorBlack, color, d);
-   
-    d = sdCircle(p * 1.03,0.5);
-   	color = mix(colorSkin, color, d);
-    return color;
+    float rba  = rb-ra;
+    float baba = dot(b-a,b-a);
+    float papa = dot(p-a,p-a);
+    float paba = dot(p-a,b-a)/baba;
+
+    float x = sqrt( papa - paba*paba*baba );
+
+    float cax = max(0.0,x-((paba<0.5)?ra:rb));
+    float cay = abs(paba-0.5)-0.5;
+
+    float k = rba*rba + baba;
+    float f = clamp( (rba*(x-ra)+paba*baba)/k, 0.0, 1.0 );
+
+    float cbx = x-ra - f*rba;
+    float cby = paba - f;
+    
+    float s = (cbx < 0.0 && cay < 0.0) ? -1.0 : 1.0;
+    
+    return s*sqrt( min(cax*cax + cay*cay*baba,
+                       cbx*cbx + cby*cby*baba) );
 }
 
-// TODO consolidate arc methods
-float eyeOutline(vec2 p, float radius, float thickness)
+// c is the sin/cos of the desired cone angle
+float sdSolidAngle(vec3 pos, vec2 c, float ra)
 {
-    // Arc
-    float ta = -PI * 0.5; // 3.14*(0.5+0.5*cos(iTime*0.52+2.0));
-    float tb = 2.5; // 3.14*(0.5+0.5*cos(iTime*0.31+2.0));
-    float rb = thickness; //0.15*(0.5+0.5*cos(iTime*0.41+3.0));
-    
-    // distance
-    float len = sdArc(p,vec2(sin(ta),cos(ta)),vec2(sin(tb),cos(tb)), radius, rb);
-    
-    return len;
+    vec2 p = vec2( length(pos.xz), pos.y );
+    float l = length(p) - ra;
+	float m = length(p - c*clamp(dot(p,c),0.0,ra) );
+    return max(l,m*sign(c.y*p.x-c.x*p.y));
 }
 
-// TODO consolidate arc methods
-float eyeLid(vec2 p, float radius, float thickness)
+float sdOctahedron(vec3 p, float s)
 {
-    // translate
-    p.y += 0.98;
-    // Arc
-    float ta = 3.14*(0.5+0.5*0.0);
-    float tb = 0.14; // 3.14*(0.5+0.5*cos(iTime*0.31+2.0));
-    float rb = thickness; //0.15*(0.5+0.5*cos(iTime*0.41+3.0));
+    p = abs(p);
+    float m = p.x + p.y + p.z - s;
+
+    // exact distance
+    #if 0
+    vec3 o = min(3.0*p - m, 0.0);
+    o = max(6.0*p - m*2.0 - o*3.0 + (o.x+o.y+o.z), 0.0);
+    return length(p - s*o/(o.x+o.y+o.z));
+    #endif
     
-    // distance
-    float len = sdArc(p,vec2(sin(ta),cos(ta)),vec2(sin(tb),cos(tb)), radius, rb);
+    // exact distance
+    #if 1
+ 	vec3 q;
+         if( 3.0*p.x < m ) q = p.xyz;
+    else if( 3.0*p.y < m ) q = p.yzx;
+    else if( 3.0*p.z < m ) q = p.zxy;
+    else return m*0.57735027;
+    float k = clamp(0.5*(q.z-q.y+s),0.0,s); 
+    return length(vec3(q.x,q.y-s+k,q.z-k)); 
+    #endif
     
-    return len;
+    // bound, not exact
+    #if 0
+	return m*0.57735027;
+    #endif
 }
 
-vec3 eyes(vec3 color, vec2 p)
+float sdPyramid( in vec3 p, in float h )
 {
-    // Right Eyes
-    p = vec2(p.x - 0.18, p.y);
-    float size = 0.13;
-    float outlineOffset = 0.01;
-   
-    float d = sdCircle(p * 1.05, size);
-   
-    float d1 = sdCircle(vec2(p.x, p.y + 1.0), 1.0);
-    d = opIntersection(d, d1);
-   	color = mix(colorWhite, color, d);
+    float m2 = h*h + 0.25;
     
-    // eye outline
-    d = eyeOutline(p, size + outlineOffset, -0.007);
-    color = mix(colorBlack, color, d);
-    
-    // pupil
-    d = 0.2 + 0.1 * cos(atan(p.y, p.x)* 10.0);
-    d = smoothstep(d * 0.03 + 0.01, d * 0.03 + 0.02, length(p));
-    color = mix(colorBlack, color, d);
-    
-    // eyeLid
-    d = eyeLid(p, 1.0, -0.007);
-    color = mix(colorBlack, color, d);
-    
-    // Left Eyes
-    p = vec2(p.x + 0.36, p.y);
-   
-    d = sdCircle(p * 1.05, size);
-    d1 = sdCircle(vec2(p.x, p.y + 1.0), 1.0);
-    d = opIntersection(d, d1);
-   	color = mix(colorWhite, color, d);
-    
-    // eye outline
-    d = eyeOutline(p, size + outlineOffset, -0.007);
-    color = mix(colorBlack, color, d);
-    
-    // pupil
-    d = 0.2 + 0.1 * cos(atan(p.y, p.x)* 10.0);
-    d = smoothstep(d * 0.03 + 0.01, d * 0.03 + 0.02, length(p));
-    color = mix(colorBlack, color, d);
-    
-    // eyeLid
-    d = eyeLid(p, 1.0, -0.007);
-    color = mix(colorBlack, color, d);
-    
-    return color;
-}
-
-// TODO consolidate arc methods
-float bagsArc(vec2 p, float radius, float thickness)
-{
-    // Arc
-    float ta = 3.14*(0.5+0.5*10.0);
-    float tb = 0.3; // 3.14*(0.5+0.5*cos(iTime*0.31+2.0));
-    float rb = thickness; //0.15*(0.5+0.5*cos(iTime*0.41+3.0));
-    
-    // distance
-    float len = sdArc(p,vec2(sin(ta),cos(ta)),vec2(sin(tb),cos(tb)), radius, rb);
-    
-    return len;
-}
-
-vec3 bags(vec3 color, vec2 p)
-{
-    p.y += 0.825;
-    vec2 centerP = p;
-    
-    // p.y *= 0.9;
-    
-    // edge
-    p = vec2(p.x - 0.22, p.y - 0.95);
-    float d = bagsArc(p, 0.2, -0.007);
-    color = mix(colorBlack, color, d);
-    
-    // edge
-    p.x += 0.44;
-    p.y -= 0.115;
-    p.x *= 1.0;
-    d = bagsArc(vec2(p.x, p.y), 0.3, -0.007);
-    color = mix(colorBlack, color, d);
-    
-    return color;
-
-}
-
-vec3 nose(vec3 color, vec2 p)
-{
-  p.y += 0.05;
-  p.y = -p.y;
-  float r1 = 0.05+0.1*0.01;
-  float r2 = 0.03+0.1*0.1;
-  float h = 0.15;
-  
-  float nose = sdUnevenCapsule( p, r1, r2, h );
-    
-  color = mix(colorBlack, color, nose);
-    
-  // Fill
-  p.y += 0.021;
-  r1 = 0.04+0.1*0.01;
-  r2 = 0.027+0.1*0.1;
-  h = 0.156;
-  
-  nose = sdUnevenCapsule( p, r1, r2, h );
-    
-  color = mix(colorSkin, color, nose);
-    
-  return color;
-}
-
-// TODO consolidate arc methods
-float mouthLine(vec2 p, float radius, float thickness)
-{
-    // translate
-    p.y += 0.98;
-    // Arc
-    float ta = 3.14*(0.5+0.5*0.0); // * 0.0 change starting point
-    float tb = 0.3; // 3.14*(0.5+0.5*cos(iTime*0.31+2.0)); // length
-    float rb = thickness; //0.15*(0.5+0.5*cos(iTime*0.41+3.0));
-    
-    // distance
-    float len = sdArc(p,vec2(sin(ta),cos(ta)),vec2(sin(tb),cos(tb)), radius, rb);
-    
-    return len;
-}
-
-// TODO consolidate arc methods
-float mouthEdge(vec2 p, float radius, float thickness)
-{
-    // translate
-    p.y += 0.98;
-    // Arc
-    float ta = 3.14*(0.5+0.5*1.2);
-    float tb = 1.5; // 3.14*(0.5+0.5*cos(iTime*0.31+2.0));
-    float rb = thickness; //0.15*(0.5+0.5*cos(iTime*0.41+3.0));
-    
-    // distance
-    float len = sdArc(p,vec2(sin(ta),cos(ta)),vec2(sin(tb),cos(tb)), radius, rb);
-    
-    return len;
-}
-
-/*
-float DrawMouth(vec2 uv)
-{
-  // position
-  uv.x -= 0.0;
-  uv.y += 0.06;
-  // curve
-  uv.y -= uv.x * uv.x * 1.5;
-  // end points
-  vec2 a = vec2(1.4, 0.85);
-  vec2 b = vec2(-1.4, 0.7);
-  // line width
-  float lWidth = 0.001;
-  float rLine = sdLineSegmentRounded(uv * 1.8, a, b, lWidth);
-  return rLine;
-}
-*/
-
-vec3 mouth(vec3 color, vec2 p)
-{
-    p.y += 0.3;
-    vec2 centerP = p;
-    
-    p.y *= 0.9;
-    
-    // edge
-    p = vec2(p.x - 0.22, p.y - 0.95);
-    float d = mouthEdge(p, 0.06, -0.007);
-    color = mix(colorBlack, color, d);
-    
-    // edge
-    p.x += 0.44;
-    d = mouthEdge(vec2(-p.x, p.y), 0.06, -0.007);
-    color = mix(colorBlack, color, d);
-    
-    // mouth
-    centerP.y -= 0.23;
-    d = mouthLine(centerP, 0.75, -0.007);
-    color = mix(colorBlack, color, d);
-    return color;
-}
-
-vec3 brow(vec3 color, vec2 p)
-{
-    // brow
-    p.y -= 0.81;
-    
-	vec2 v1 = vec2(-0.22, -0.5);
-    vec2 v2 = vec2(0.22, -0.5);
-    
-    // outline
-    float thickness = 0.04;
-	float d = sdSegment( p, v1, v2, thickness);
+    // symmetry
+    p.xz = abs(p.xz);
+    p.xz = (p.z>p.x) ? p.zx : p.xz;
+    p.xz -= 0.5;
 	
-    color = mix(colorBlack, color, d);
+    // project into face plane (2D)
+    vec3 q = vec3( p.z, h*p.y - 0.5*p.x, h*p.x + 0.5*p.y);
+   
+    float s = max(-q.x,0.0);
+    float t = clamp( (q.y-0.5*p.z)/(m2+0.25), 0.0, 1.0 );
     
-    // fill
-    thickness = 0.04;
-	d = sdSegment( p, v1, v2, thickness - 0.01);
-	
-    color = mix(colorHair, color, d);
-    return color;
+    float a = m2*(q.x+s)*(q.x+s) + q.y*q.y;
+	float b = m2*(q.x+0.5*t)*(q.x+0.5*t) + (q.y-m2*t)*(q.y-m2*t);
+    
+    float d2 = min(q.y,-q.x*m2-q.y*0.5) > 0.0 ? 0.0 : min(a,b);
+    
+    // recover 3D and scale, and add sign
+    return sqrt( (d2+q.z*q.z)/m2 ) * sign(max(q.z,-p.y));;
+}
+
+// la,lb=semi axis, h=height, ra=corner
+float sdRhombus(vec3 p, float la, float lb, float h, float ra)
+{
+    p = abs(p);
+    vec2 b = vec2(la,lb);
+    float f = clamp( (ndot(b,b-2.0*p.xz))/dot(b,b), -1.0, 1.0 );
+	vec2 q = vec2(length(p.xz-0.5*b*vec2(1.0-f,1.0+f))*sign(p.x*b.y+p.z*b.x-b.x*b.y)-ra, p.y-h);
+    return min(max(q.x,q.y),0.0) + length(max(q,0.0));
+}
+
+//------------------------------------------------------------------
+
+vec2 opU( vec2 d1, vec2 d2 )
+{
+	return (d1.x<d2.x) ? d1 : d2;
+}
+
+//------------------------------------------------------------------
+
+#define ZERO (min(0,0))
+
+//------------------------------------------------------------------
+
+vec2 map( in vec3 pos )
+{
+    vec2 res = vec2( 1e10, 0.0 );
+
+    {
+      res = opU( res, vec2( sdSphere(    pos-vec3(-2.0,0.25, 0.0), 0.25 ), 26.9 ) );
+    }
+
+    // bounding box
+    if( sdBox( pos-vec3(0.0,0.3,-1.0),vec3(0.35,0.3,2.5) )<res.x )
+    {
+    // more primitives
+    res = opU( res, vec2( sdBoundingBox( pos-vec3( 0.0,0.25, 0.0), vec3(0.3,0.25,0.2), 0.025 ), 16.9 ) );
+	res = opU( res, vec2( sdTorus(      (pos-vec3( 0.0,0.30, 1.0)).xzy, vec2(0.25,0.05) ), 25.0 ) );
+	res = opU( res, vec2( sdCone(        pos-vec3( 0.0,0.45,-1.0), vec2(0.6,0.8),0.45 ), 55.0 ) );
+    res = opU( res, vec2( sdCappedCone(  pos-vec3( 0.0,0.25,-2.0), 0.25, 0.25, 0.1 ), 13.67 ) );
+    res = opU( res, vec2( sdSolidAngle(  pos-vec3( 0.0,0.00,-3.0), vec2(3,4)/5.0, 0.4 ), 49.13 ) );
+    }
+
+    // bounding box
+    if( sdBox( pos-vec3(1.0,0.3,-1.0),vec3(0.35,0.3,2.5) )<res.x )
+    {
+    // more primitives
+	res = opU( res, vec2( sdCappedTorus((pos-vec3( 1.0,0.30, 1.0))*vec3(1,-1,1), vec2(0.866025,-0.5), 0.25, 0.05), 8.5) );
+    res = opU( res, vec2( sdBox(         pos-vec3( 1.0,0.25, 0.0), vec3(0.3,0.25,0.1) ), 3.0 ) );
+    res = opU( res, vec2( sdCapsule(     pos-vec3( 1.0,0.00,-1.0),vec3(-0.1,0.1,-0.1), vec3(0.2,0.4,0.2), 0.1  ), 31.9 ) );
+	res = opU( res, vec2( sdCylinder(    pos-vec3( 1.0,0.25,-2.0), vec2(0.15,0.25) ), 8.0 ) );
+    res = opU( res, vec2( sdHexPrism(    pos-vec3( 1.0,0.2,-3.0), vec2(0.2,0.05) ), 18.4 ) );
+    }
+
+    // bounding box
+    if( sdBox( pos-vec3(-1.0,0.35,-1.0),vec3(0.35,0.35,2.5))<res.x )
+    {
+    // more primitives
+	res = opU( res, vec2( sdPyramid(    pos-vec3(-1.0,-0.6,-3.0), 1.0 ), 13.56 ) );
+	res = opU( res, vec2( sdOctahedron( pos-vec3(-1.0,0.15,-2.0), 0.35 ), 23.56 ) );
+    res = opU( res, vec2( sdTriPrism(   pos-vec3(-1.0,0.15,-1.0), vec2(0.3,0.05) ),43.5 ) );
+    res = opU( res, vec2( sdEllipsoid(  pos-vec3(-1.0,0.25, 0.0), vec3(0.2, 0.25, 0.05) ), 43.17 ) );
+	res = opU( res, vec2( sdRhombus(   (pos-vec3(-1.0,0.34, 1.0)).xzy, 0.15, 0.25, 0.04, 0.08 ),17.0 ) );
+    }
+
+    // bounding box
+    if( sdBox( pos-vec3(2.0,0.3,-1.0),vec3(0.35,0.3,2.5) )<res.x )
+    {
+    // more primitives
+    res = opU( res, vec2( sdOctogonPrism(pos-vec3( 2.0,0.2,-3.0), 0.2, 0.05), 51.8 ) );
+    res = opU( res, vec2( sdCylinder(    pos-vec3( 2.0,0.15,-2.0), vec3(0.1,-0.1,0.0), vec3(-0.2,0.35,0.1), 0.08), 31.2 ) );
+	res = opU( res, vec2( sdCappedCone(  pos-vec3( 2.0,0.10,-1.0), vec3(0.1,0.0,0.0), vec3(-0.2,0.40,0.1), 0.15, 0.05), 46.1 ) );
+    res = opU( res, vec2( sdRoundCone(   pos-vec3( 2.0,0.15, 0.0), vec3(0.1,0.0,0.0), vec3(-0.1,0.35,0.1), 0.15, 0.05), 51.7 ) );
+    res = opU( res, vec2( sdRoundCone(   pos-vec3( 2.0,0.20, 1.0), 0.2, 0.1, 0.3 ), 37.0 ) );
+    }
+    
+    return res;
+}
+
+// http://iquilezles.org/www/articles/boxfunctions/boxfunctions.htm
+vec2 iBox( in vec3 ro, in vec3 rd, in vec3 rad ) 
+{
+    vec3 m = 1.0/rd;
+    vec3 n = m*ro;
+    vec3 k = abs(m)*rad;
+    vec3 t1 = -n - k;
+    vec3 t2 = -n + k;
+	return vec2( max( max( t1.x, t1.y ), t1.z ),
+	             min( min( t2.x, t2.y ), t2.z ) );
+}
+
+vec2 raycast( in vec3 ro, in vec3 rd )
+{
+    vec2 res = vec2(-1.0,-1.0);
+
+    float tmin = 1.0;
+    float tmax = 20.0;
+
+    // raytrace floor plane
+    float tp1 = (0.0-ro.y)/rd.y;
+    if( tp1>0.0 )
+    {
+        tmax = min( tmax, tp1 );
+        res = vec2( tp1, 1.0 );
+    }
+    //else return res;
+    
+    // raymarch primitives   
+    vec2 tb = iBox( ro-vec3(0.0,0.4,-0.5), rd, vec3(2.5,0.41,3.0) );
+    if( tb.x<tb.y && tb.y>0.0 && tb.x<tmax)
+    {
+        //return vec2(tb.x,2.0);
+        tmin = max(tb.x,tmin);
+        tmax = min(tb.y,tmax);
+
+        float t = tmin;
+        for( int i=0; i<70 && t<tmax; i++ )
+        {
+            vec2 h = map( ro+rd*t );
+            if( abs(h.x)<(0.0001*t) )
+            { 
+                res = vec2(t,h.y); 
+                break;
+            }
+            t += h.x;
+        }
+    }
+    
+    return res;
+}
+
+// http://iquilezles.org/www/articles/rmshadows/rmshadows.htm
+float calcSoftshadow( in vec3 ro, in vec3 rd, in float mint, in float tmax )
+{
+    // bounding volume
+    float tp = (0.8-ro.y)/rd.y; if( tp>0.0 ) tmax = min( tmax, tp );
+
+    float res = 1.0;
+    float t = mint;
+    for( int i=ZERO; i<24; i++ )
+    {
+		float h = map( ro + rd*t ).x;
+        float s = clamp(8.0*h/t,0.0,1.0);
+        res = min( res, s*s*(3.0-2.0*s) );
+        t += clamp( h, 0.02, 0.2 );
+        if( res<0.004 || t>tmax ) break;
+    }
+    return clamp( res, 0.0, 1.0 );
+}
+
+// http://iquilezles.org/www/articles/normalsSDF/normalsSDF.htm
+vec3 calcNormal( in vec3 pos )
+{
+#if 0
+    vec2 e = vec2(1.0,-1.0)*0.5773*0.0005;
+    return normalize( e.xyy*map( pos + e.xyy ).x + 
+					  e.yyx*map( pos + e.yyx ).x + 
+					  e.yxy*map( pos + e.yxy ).x + 
+					  e.xxx*map( pos + e.xxx ).x );
+#else
+    // inspired by tdhooper and klems - a way to prevent the compiler from inlining map() 4 times
+    vec3 n = vec3(0.0);
+    for( int i=ZERO; i<4; i++ )
+    {
+        vec3 e = 0.5773*(2.0*vec3((((i+3)>>1)&1),((i>>1)&1),(i&1))-1.0);
+        n += e*map(pos+0.0005*e).x;
+      //if( n.x+n.y+n.z>100.0 ) break;
+    }
+    return normalize(n);
+#endif    
+}
+
+float calcAO( in vec3 pos, in vec3 nor )
+{
+	float occ = 0.0;
+    float sca = 1.0;
+    for( int i=ZERO; i<5; i++ )
+    {
+        float h = 0.01 + 0.12*float(i)/4.0;
+        float d = map( pos + h*nor ).x;
+        occ += (h-d)*sca;
+        sca *= 0.95;
+        if( occ>0.35 ) break;
+    }
+    return clamp( 1.0 - 3.0*occ, 0.0, 1.0 ) * (0.5+0.5*nor.y);
+}
+
+// http://iquilezles.org/www/articles/checkerfiltering/checkerfiltering.htm
+float checkersGradBox( in vec2 p, in vec2 dpdx, in vec2 dpdy )
+{
+    // filter kernel
+    vec2 w = abs(dpdx)+abs(dpdy) + 0.001;
+    // analytical integral (box filter)
+    vec2 i = 2.0*(abs(fract((p-0.5*w)*0.5)-0.5)-abs(fract((p+0.5*w)*0.5)-0.5))/w;
+    // xor pattern
+    return 0.5 - 0.5*i.x*i.y;                  
+}
+
+vec3 render( in vec3 ro, in vec3 rd, in vec3 rdx, in vec3 rdy )
+{ 
+    // background
+    vec3 col = vec3(0.7, 0.7, 0.9) - max(rd.y,0.0)*0.3;
+    
+    // raycast scene
+    vec2 res = raycast(ro,rd);
+    float t = res.x;
+	float m = res.y;
+    if( m>-0.5 )
+    {
+        vec3 pos = ro + t*rd;
+        vec3 nor = (m<1.5) ? vec3(0.0,1.0,0.0) : calcNormal( pos );
+        vec3 ref = reflect( rd, nor );
+        
+        // material        
+        col = 0.2 + 0.2*sin( m*2.0 + vec3(0.0,1.0,2.0) );
+        float ks = 1.0;
+        
+        if( m<1.5 )
+        {
+            // project pixel footprint into the plane
+            vec3 dpdx = ro.y*(rd/rd.y-rdx/rdx.y);
+            vec3 dpdy = ro.y*(rd/rd.y-rdy/rdy.y);
+
+            float f = checkersGradBox( 3.0*pos.xz, 3.0*dpdx.xz, 3.0*dpdy.xz );
+            col = 0.15 + f*vec3(0.05);
+            ks = 0.4;
+        }
+
+        // lighting
+        float occ = calcAO( pos, nor );
+        
+		vec3 lin = vec3(0.0);
+
+        // sun
+        {
+            vec3  lig = normalize( vec3(-0.5, 0.4, -0.6) );
+            vec3  hal = normalize( lig-rd );
+            float dif = clamp( dot( nor, lig ), 0.0, 1.0 );
+          //if( dif>0.0001 )
+        	      dif *= calcSoftshadow( pos, lig, 0.02, 2.5 );
+			float spe = pow( clamp( dot( nor, hal ), 0.0, 1.0 ),16.0);
+                  spe *= dif;
+                  spe *= 0.04+0.96*pow(clamp(1.0-dot(hal,lig),0.0,1.0),5.0);
+            lin += col*2.20*dif*vec3(1.30,1.00,0.70);
+            lin +=     5.00*spe*vec3(1.30,1.00,0.70)*ks;
+        }
+        // sky
+        {
+            float dif = sqrt(clamp( 0.5+0.5*nor.y, 0.0, 1.0 ));
+                  dif *= occ;
+            float spe = smoothstep( -0.2, 0.2, ref.y );
+                  spe *= dif;
+                  spe *= 0.04+0.96*pow(clamp(1.0+dot(nor,rd),0.0,1.0), 5.0 );
+          //if( spe>0.001 )
+                  spe *= calcSoftshadow( pos, ref, 0.02, 2.5 );
+            lin += col*0.60*dif*vec3(0.40,0.60,1.15);
+            lin +=     2.00*spe*vec3(0.40,0.60,1.30)*ks;
+        }
+        // back
+        {
+        	float dif = clamp( dot( nor, normalize(vec3(0.5,0.0,0.6))), 0.0, 1.0 )*clamp( 1.0-pos.y,0.0,1.0);
+                  dif *= occ;
+        	lin += col*0.55*dif*vec3(0.25,0.25,0.25);
+        }
+        // sss
+        {
+            float dif = pow(clamp(1.0+dot(nor,rd),0.0,1.0),2.0);
+                  dif *= occ;
+        	lin += col*0.25*dif*vec3(1.00,1.00,1.00);
+        }
+        
+		col = lin;
+
+        col = mix( col, vec3(0.7,0.7,0.9), 1.0-exp( -0.0001*t*t*t ) );
+    }
+
+	return vec3( clamp(col,0.0,1.0) );
+}
+
+mat3 setCamera( in vec3 ro, in vec3 ta, float cr )
+{
+	vec3 cw = normalize(ta-ro);
+	vec3 cp = vec3(sin(cr), cos(cr),0.0);
+	vec3 cu = normalize( cross(cw,cp) );
+	vec3 cv =          ( cross(cu,cw) );
+    return mat3( cu, cv, cw );
 }
 
 
 void main() {
 	vec2 uv = (2.0*v_FragPos-iResolution.xy)/iResolution.y;
-    
-    // TODO shared rotated uv
-    vec2 uvRot = Rotate2D(-0.15) * uv;
-    
-    vec3 col = vec3(colorBackground);
-    
-    // Hair Outline
- 	// color = mix(color, vec3(0.0), DrawHair(uvRot * 0.99));
-  	// Hair
-  	// color = mix(color, colorHair, DrawHair(uvRot));
-    
-    // Hair Outline2
-  	col = drawHair(col, vec2(-uvRot.x, uvRot.y));
-    
-    col = ears(col, vec2(uv.x, uv.y));
-    col = head(col, vec2(uv.x * 1.35, uv.y * 0.825));
-    col = eyes(col, vec2(uv.x, uv.y - 0.125));
-    col = nose(col, Rotate2D(-0.15) * uv);
-    col = mouth(col, uv);
-    col = brow(col, uv);
-    col = bags(col, uv);
-    
-    // col = mix(vec3(0.0), col, DrawEyeBrow(uvRot * 0.98));
-    // col = mix(colorHair, col, DrawEyeBrow(uvRot));
-    
-    /*
-	// coloring
-    vec3 col = vec3(1.0) - sign(d)*vec3(0.1,0.4,0.7);
-    col *= 1.0 - exp(-3.0*abs(d));
-	col *= 0.8 + 0.2*cos(150.0*d);
-	col = mix( col, vec3(1.0), 1.0-smoothstep(0.0,0.01,abs(d)) );
-	*/
-    //float gamma = 2.2;
-    //col.rgb = pow(col.rgb, vec3(1.0/gamma));
 
-	color = vec4(col,1.0);
+    vec2 mo = 1/iResolution.xy;
+	float time = 32.0 + push.iTime * 1.5;
+
+    // camera	
+    vec3 ta = vec3( 0.5, -0.5, -0.6 );
+    vec3 ro = ta + vec3( 4.5*cos(0.1*time + 7.0*mo.x), 1.3 + 2.0*mo.y, 4.5*sin(0.1*time + 7.0*mo.x) );
+    // camera-to-world transformation
+    mat3 ca = setCamera( ro, ta, 0.0 );
+
+    vec3 tot = vec3(0.0);
+#if AA>1
+    for( int m=ZERO; m<AA; m++ )
+    for( int n=ZERO; n<AA; n++ )
+    {
+        // pixel coordinates
+        vec2 o = vec2(float(m),float(n)) / float(AA) - 0.5;
+        vec2 p = (2.0*(v_FragPos+o)-iResolution.xy)/iResolution.y;
+#else    
+        vec2 p = (2.0*v_FragPos-iResolution.xy)/iResolution.y;
+#endif
+
+        // focal length
+        const float fl = 2.5;
+        
+        // ray direction
+        vec3 rd = ca * normalize( vec3(p,fl) );
+
+         // ray differentials
+        vec2 px = (2.0*(v_FragPos+vec2(1.0,0.0))-iResolution.xy)/iResolution.y;
+        vec2 py = (2.0*(v_FragPos+vec2(0.0,1.0))-iResolution.xy)/iResolution.y;
+        vec3 rdx = ca * normalize( vec3(px,fl) );
+        vec3 rdy = ca * normalize( vec3(py,fl) );
+        
+        // render	
+        vec3 col = render( ro, rd, rdx, rdy );
+
+        // gain
+        // col = col*3.0/(2.5+col);
+        
+		// gamma
+        col = pow( col, vec3(0.4545) );
+
+        tot += col;
+#if AA>1
+    }
+    tot /= float(AA*AA);
+#endif
+    
+    color = vec4( tot, 1.0 );
 }

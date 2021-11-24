@@ -116,7 +116,7 @@ namespace Rui {
 			commandBuffer.bindVertexBuffers(0, 1, &vertexBuffer, offsets);
 			commandBuffer.bindIndexBuffer(indexBuffer, 0, vk::IndexType::eUint32);
 			float time = std::chrono::steady_clock::now().time_since_epoch().count() / 1000000000.0f;
-		RUI_CORE_INFO("{0}", time);
+
 			commandBuffer.pushConstants(s_Data->PipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(float), &time);
 
 			commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);

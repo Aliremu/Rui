@@ -39,7 +39,7 @@ namespace Rui {
 
 		auto commandBuffer = s_Data->CommandBuffers[imageIndex];
 
-		const std::vector<Vertex> vertices = {
+		/*const std::vector<Vertex> vertices = {
 			{{0.0f, 0.0f}, {1.0f, 0.0f}},
 			{{1.0f, 0.0f}, {0.0f, 1.0f}},
 			{{1.0f, 1.0f}, {0.0f, 0.0f}},
@@ -85,7 +85,7 @@ namespace Rui {
 
 		s_Device->m_Allocator.mapMemory(alloc2, &a2);
 		memcpy(a2, indices.data(), sizeof(indices[0]) * indices.size());
-		s_Device->m_Allocator.unmapMemory(alloc2);
+		s_Device->m_Allocator.unmapMemory(alloc2);*/
 		const VkDeviceSize offsets[1] = { 0 };
 
 			vk::CommandBufferBeginInfo beginInfo;
@@ -111,15 +111,20 @@ namespace Rui {
 			s_Data->Pipeline->Bind(commandBuffer);
 			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, s_Data->PipelineLayout, 0, 1, &s_Data->DescriptorSets[imageIndex], 0, nullptr);
 
-			//commandBuffer.dispatch(256, 1, 1);
-
-			commandBuffer.bindVertexBuffers(0, 1, &vertexBuffer, offsets);
-			commandBuffer.bindIndexBuffer(indexBuffer, 0, vk::IndexType::eUint32);
+			commandBuffer.bindVertexBuffers(0, 1, &s_Data->vertexBuffer, offsets);
+			commandBuffer.bindIndexBuffer(s_Data->indexBuffer, 0, vk::IndexType::eUint32);
 			float time = std::chrono::steady_clock::now().time_since_epoch().count() / 1000000000.0f;
+			PushConstants tmp;
 
-			commandBuffer.pushConstants(s_Data->PipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(float), &time);
+			float w = Application::Get().GetDisplay().GetWidth();
+			float h = Application::Get().GetDisplay().GetHeight();
 
-			commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+			tmp.iTime = time;
+			tmp.iResolution = {w, h};
+
+			commandBuffer.pushConstants(s_Data->PipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(PushConstants), &tmp);
+
+			commandBuffer.drawIndexed(static_cast<uint32_t>(s_Data->indices.size()), 1, 0, 0, 0);
 
 			commandBuffer.endRenderPass();
 			commandBuffer.end();
@@ -185,7 +190,7 @@ namespace Rui {
 
 	void RenderSystem::CreatePipelineLayout() {
 		std::vector<vk::PushConstantRange> pushConstantRanges = {
-			vk::PushConstantRange(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(float))
+			vk::PushConstantRange(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(PushConstants))
 		};
 
 		vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
@@ -250,22 +255,19 @@ namespace Rui {
 			RUI_CORE_ERROR("Failed to allocate command buffers!");
 		}
 
-		const std::vector<Vertex> vertices = {
+		s_Data->vertices = {
 			{{0.0f, 0.0f}, {1.0f, 0.0f}},
 			{{1.0f, 0.0f}, {0.0f, 1.0f}},
 			{{1.0f, 1.0f}, {0.0f, 0.0f}},
 			{{0.0f, 1.0f}, {1.0f, 1.0f}}
 		};
 
-		std::vector<uint32_t> indices = {
+		s_Data->indices = {
 			0, 1, 2, 2, 3, 0
 		};
 
-		vk::Buffer vertexBuffer;
-		vk::Buffer indexBuffer;
-
 		vk::BufferCreateInfo buffer_info;
-		buffer_info.size = sizeof(vertices[0]) * vertices.size();
+		buffer_info.size = sizeof(s_Data->vertices[0]) * s_Data->vertices.size();
 		buffer_info.usage = vk::BufferUsageFlagBits::eVertexBuffer;
 		vma::AllocationCreateInfo create_info;
 		create_info.requiredFlags = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
@@ -273,16 +275,16 @@ namespace Rui {
 		vma::AllocationInfo info;
 		vma::Allocation alloc;
 
-		s_Device->m_Allocator.createBuffer(&buffer_info, &create_info, &vertexBuffer, &alloc, &info);
+		s_Device->m_Allocator.createBuffer(&buffer_info, &create_info, &s_Data->vertexBuffer, &alloc, &info);
 
 		void* a;
 
 		s_Device->m_Allocator.mapMemory(alloc, &a);
-		memcpy(a, vertices.data(), sizeof(vertices[0]) * vertices.size());
+		memcpy(a, s_Data->vertices.data(), sizeof(s_Data->vertices[0]) * s_Data->vertices.size());
 		s_Device->m_Allocator.unmapMemory(alloc);
 		//------------------------------//
 		vk::BufferCreateInfo buffer_info2;
-		buffer_info2.size = sizeof(indices[0]) * indices.size();
+		buffer_info2.size = sizeof(s_Data->indices[0]) * s_Data->indices.size();
 		buffer_info2.usage = vk::BufferUsageFlagBits::eIndexBuffer;
 		vma::AllocationCreateInfo create_info2;
 		create_info2.requiredFlags = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
@@ -290,12 +292,12 @@ namespace Rui {
 		vma::AllocationInfo info2;
 		vma::Allocation alloc2;
 
-		s_Device->m_Allocator.createBuffer(&buffer_info2, &create_info2, &indexBuffer, &alloc2, &info2);
+		s_Device->m_Allocator.createBuffer(&buffer_info2, &create_info2, &s_Data->indexBuffer, &alloc2, &info2);
 
 		void* a2;
 
 		s_Device->m_Allocator.mapMemory(alloc2, &a2);
-		memcpy(a2, indices.data(), sizeof(indices[0]) * indices.size());
+		memcpy(a2, s_Data->indices.data(), sizeof(s_Data->indices[0]) * s_Data->indices.size());
 		s_Device->m_Allocator.unmapMemory(alloc2);
 		const VkDeviceSize offsets[1] = { 0 };
 
@@ -324,13 +326,14 @@ namespace Rui {
 			s_Data->Pipeline->Bind(commandBuffer);
 			RUI_CORE_TRACE("DRAW SHIT");
 			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, s_Data->PipelineLayout, 0, 1, &s_Data->DescriptorSets[i], 0, nullptr);
-			float tmp = 0;
-			commandBuffer.pushConstants(RenderSystem::GetData().PipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(float), new float[] {0.0f});
-			commandBuffer.bindVertexBuffers(0, 1, &vertexBuffer, offsets);
-			commandBuffer.bindIndexBuffer(indexBuffer, 0, vk::IndexType::eUint32);
+			PushConstants tmp= { {1280.0f, 720.0f}, 0.0f };
+			RUI_CORE_ERROR("Size of PushConstants: {0}", sizeof(PushConstants));
+			commandBuffer.pushConstants(RenderSystem::GetData().PipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(PushConstants), &tmp);
+			commandBuffer.bindVertexBuffers(0, 1, &s_Data->vertexBuffer, offsets);
+			commandBuffer.bindIndexBuffer(s_Data->indexBuffer, 0, vk::IndexType::eUint32);
 
 
-			commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+			commandBuffer.drawIndexed(static_cast<uint32_t>(s_Data->indices.size()), 1, 0, 0, 0);
 
 			commandBuffer.endRenderPass();
 			commandBuffer.end();

@@ -15,6 +15,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/${OUTPUT_DIR}/${PROJE
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
 list(APPEND CMAKE_PREFIX_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
+file(GLOB MY_SHADERS "${CMAKE_SOURCE_DIR}/Sandbox/res/shaders/*.frag" "${CMAKE_SOURCE_DIR}/Sandbox/res/shaders/*.vert")
+
 find_package(glm CONFIG REQUIRED)
 find_package(SDL2 CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
@@ -30,6 +32,13 @@ target_link_libraries(${PROJECT_NAME} Rui ${Vulkan_LIBRARIES} SDL2main SDL2 glm:
 target_compile_definitions(${PROJECT_NAME} PRIVATE RUI_PLATFORM_WINDOWS RUI_ENABLE_ASSERTS)
 
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
+
+foreach(CurrentShader IN LISTS MY_SHADERS)
+    add_custom_command(
+                TARGET ${PROJECT_NAME} PRE_BUILD
+                COMMAND glslangValidator.exe -V -o "${CurrentShader}.spv" "${CurrentShader}"
+                COMMENT "Copying header: ${CurrentShader}")
+endforeach()
 
 #if(MSVC)
     #add_compile_options(

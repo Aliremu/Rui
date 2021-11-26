@@ -400,7 +400,8 @@ namespace Rui {
         for(size_t i = 0; i < swapChainImageViews.size(); i++) {
             RenderSystem::GetDevice().GetDevice().destroyImageView(swapChainImageViews[i], nullptr);
         }
-
+        
+        RenderSystem::GetDevice().GetDevice().destroySwapchainKHR(swapChain, nullptr);
 
         CreateSwapChain();
         CreateImageViews();

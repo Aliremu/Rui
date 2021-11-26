@@ -95,7 +95,7 @@ public:
 
     void OnUpdate(const Rui::Timestep& ts) override {
         //RUI_TRACE("{0}s Timestep", 1);
-        Rui::RenderSystem::DrawTriangle();
+        
         gScene->simulate((PxReal) ts.m_dt);
         gScene->fetchResults(true);
     }
@@ -103,7 +103,9 @@ public:
     void OnEvent(Rui::Event& event) override {}
     void OnLoad() override {}
     void OnUnload() override {}
-	void OnRender(const Rui::Timestep& ts) override {}
+	void OnRender(const Rui::Timestep& ts) override {
+        Rui::RenderSystem::DrawTriangle();
+    }
 };
 
 class Sandbox : public Rui::Application {

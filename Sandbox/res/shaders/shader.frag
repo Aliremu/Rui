@@ -15,12 +15,11 @@ layout(location = 3) in vec2 v_FragPos;
 layout(location = 0) out vec4 color;
 
 layout(push_constant) uniform Push {
+    vec2 iResolution;
     float iTime;
-} push;
+} PushConstants;
 
-vec2 iResolution = vec2(1280, 720);
-
-// Copyright Inigo Quilez, 2016 - https://iquilezles.org/
+// Copyright Inigo Quilez, 2013 - https://iquilezles.org/
 // I am the sole copyright owner of this Work.
 // You cannot host, display, distribute or share this Work in any form,
 // including physical and digital. You cannot use this Work in any
@@ -31,571 +30,219 @@ vec2 iResolution = vec2(1280, 720);
 // of your educational material. If these conditions are too restrictive
 // please contact me and we'll definitely work it out.
 
-// A list of useful distance function to simple primitives. All
-// these functions (except for ellipsoid) return an exact
-// euclidean distance, meaning they produce a better SDF than
-// what you'd get if you were constructing them from boolean
-// operations (such as cutting an infinite cylinder with two planes).
 
-// List of other 3D SDFs:
-//    https://www.shadertoy.com/playlist/43cXRl
-// and
-//    http://iquilezles.org/www/articles/distfunctions/distfunctions.htm
+// Volumetric clouds. Not physically correct in any way - 
+// it does the wrong extintion computations and also
+// works in sRGB instead of linear RGB color space. No
+// shadows are computed, no scattering is computed. It is
+// a volumetric raymarcher than samples an fBM and tweaks
+// the colors to make it look good.
+//
+// Lighting is done with only one extra sample per raymarch
+// step instead of using 3 to compute a density gradient,
+// by using this directional derivative technique:
+//
+// https://iquilezles.org/www/articles/derivative/derivative.htm
 
-#if HW_PERFORMANCE==0
-#define AA 1
-#else
-#define AA 2   // make this 2 or 3 for antialiasing
-#endif
 
-//------------------------------------------------------------------
-float dot2( in vec2 v ) { return dot(v,v); }
-float dot2( in vec3 v ) { return dot(v,v); }
-float ndot( in vec2 a, in vec2 b ) { return a.x*b.x - a.y*b.y; }
+// 0: one 3d texture lookup
+// 1: two 2d texture lookups with hardware interpolation
+// 2: two 2d texture lookups with software interpolation
+#define NOISE_METHOD 1
 
-float sdPlane( vec3 p )
-{
-	return p.y;
+// 0: no LOD
+// 1: yes LOD
+#define USE_LOD 1
+
+vec3 mod289(vec3 x) {
+  return x - floor(x * (1.0 / 289.0)) * 289.0;
 }
 
-float sdSphere( vec3 p, float s )
-{
-    return length(p)-s;
+vec4 mod289(vec4 x) {
+  return x - floor(x * (1.0 / 289.0)) * 289.0;
 }
 
-float sdBox( vec3 p, vec3 b )
-{
-    vec3 d = abs(p) - b;
-    return min(max(d.x,max(d.y,d.z)),0.0) + length(max(d,0.0));
+vec4 permute(vec4 x) {
+     return mod289(((x*34.0)+10.0)*x);
 }
 
-float sdBoundingBox( vec3 p, vec3 b, float e )
+vec4 taylorInvSqrt(vec4 r)
 {
-       p = abs(p  )-b;
-  vec3 q = abs(p+e)-e;
-
-  return min(min(
-      length(max(vec3(p.x,q.y,q.z),0.0))+min(max(p.x,max(q.y,q.z)),0.0),
-      length(max(vec3(q.x,p.y,q.z),0.0))+min(max(q.x,max(p.y,q.z)),0.0)),
-      length(max(vec3(q.x,q.y,p.z),0.0))+min(max(q.x,max(q.y,p.z)),0.0));
-}
-float sdEllipsoid( in vec3 p, in vec3 r ) // approximated
-{
-    float k0 = length(p/r);
-    float k1 = length(p/(r*r));
-    return k0*(k0-1.0)/k1;
+  return 1.79284291400159 - 0.85373472095314 * r;
 }
 
-float sdTorus( vec3 p, vec2 t )
-{
-    return length( vec2(length(p.xz)-t.x,p.y) )-t.y;
-}
+float noise(vec3 v) { 
+  const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
+  const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
 
-float sdCappedTorus(in vec3 p, in vec2 sc, in float ra, in float rb)
-{
-    p.x = abs(p.x);
-    float k = (sc.y*p.x>sc.x*p.y) ? dot(p.xy,sc) : length(p.xy);
-    return sqrt( dot(p,p) + ra*ra - 2.0*ra*k ) - rb;
-}
+// First corner
+  vec3 i  = floor(v + dot(v, C.yyy) );
+  vec3 x0 =   v - i + dot(i, C.xxx) ;
 
-float sdHexPrism( vec3 p, vec2 h )
-{
-    vec3 q = abs(p);
+// Other corners
+  vec3 g = step(x0.yzx, x0.xyz);
+  vec3 l = 1.0 - g;
+  vec3 i1 = min( g.xyz, l.zxy );
+  vec3 i2 = max( g.xyz, l.zxy );
 
-    const vec3 k = vec3(-0.8660254, 0.5, 0.57735);
-    p = abs(p);
-    p.xy -= 2.0*min(dot(k.xy, p.xy), 0.0)*k.xy;
-    vec2 d = vec2(
-       length(p.xy - vec2(clamp(p.x, -k.z*h.x, k.z*h.x), h.x))*sign(p.y - h.x),
-       p.z-h.y );
-    return min(max(d.x,d.y),0.0) + length(max(d,0.0));
-}
+  //   x0 = x0 - 0.0 + 0.0 * C.xxx;
+  //   x1 = x0 - i1  + 1.0 * C.xxx;
+  //   x2 = x0 - i2  + 2.0 * C.xxx;
+  //   x3 = x0 - 1.0 + 3.0 * C.xxx;
+  vec3 x1 = x0 - i1 + C.xxx;
+  vec3 x2 = x0 - i2 + C.yyy; // 2.0*C.x = 1/3 = C.y
+  vec3 x3 = x0 - D.yyy;      // -1.0+3.0*C.x = -0.5 = -D.y
 
-float sdOctogonPrism( in vec3 p, in float r, float h )
-{
-  const vec3 k = vec3(-0.9238795325,   // sqrt(2+sqrt(2))/2 
-                       0.3826834323,   // sqrt(2-sqrt(2))/2
-                       0.4142135623 ); // sqrt(2)-1 
-  // reflections
-  p = abs(p);
-  p.xy -= 2.0*min(dot(vec2( k.x,k.y),p.xy),0.0)*vec2( k.x,k.y);
-  p.xy -= 2.0*min(dot(vec2(-k.x,k.y),p.xy),0.0)*vec2(-k.x,k.y);
-  // polygon side
-  p.xy -= vec2(clamp(p.x, -k.z*r, k.z*r), r);
-  vec2 d = vec2( length(p.xy)*sign(p.y), p.z-h );
-  return min(max(d.x,d.y),0.0) + length(max(d,0.0));
-}
+// Permutations
+  i = mod289(i); 
+  vec4 p = permute( permute( permute( 
+             i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+           + i.y + vec4(0.0, i1.y, i2.y, 1.0 )) 
+           + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
 
-float sdCapsule( vec3 p, vec3 a, vec3 b, float r )
-{
-	vec3 pa = p-a, ba = b-a;
-	float h = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
-	return length( pa - ba*h ) - r;
-}
+// Gradients: 7x7 points over a square, mapped onto an octahedron.
+// The ring size 17*17 = 289 is close to a multiple of 49 (49*6 = 294)
+  float n_ = 0.142857142857; // 1.0/7.0
+  vec3  ns = n_ * D.wyz - D.xzx;
 
-float sdRoundCone( in vec3 p, in float r1, float r2, float h )
+  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);  //  mod(p,7*7)
+
+  vec4 x_ = floor(j * ns.z);
+  vec4 y_ = floor(j - 7.0 * x_ );    // mod(j,N)
+
+  vec4 x = x_ *ns.x + ns.yyyy;
+  vec4 y = y_ *ns.x + ns.yyyy;
+  vec4 h = 1.0 - abs(x) - abs(y);
+
+  vec4 b0 = vec4( x.xy, y.xy );
+  vec4 b1 = vec4( x.zw, y.zw );
+
+  //vec4 s0 = vec4(lessThan(b0,0.0))*2.0 - 1.0;
+  //vec4 s1 = vec4(lessThan(b1,0.0))*2.0 - 1.0;
+  vec4 s0 = floor(b0)*2.0 + 1.0;
+  vec4 s1 = floor(b1)*2.0 + 1.0;
+  vec4 sh = -step(h, vec4(0.0));
+
+  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+  vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+
+  vec3 p0 = vec3(a0.xy,h.x);
+  vec3 p1 = vec3(a0.zw,h.y);
+  vec3 p2 = vec3(a1.xy,h.z);
+  vec3 p3 = vec3(a1.zw,h.w);
+
+//Normalise gradients
+  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+  p0 *= norm.x;
+  p1 *= norm.y;
+  p2 *= norm.z;
+  p3 *= norm.w;
+
+// Mix final noise value
+  vec4 m = max(0.5 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+  m = m * m;
+  return 105.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), 
+                                dot(p2,x2), dot(p3,x3) ) );
+  }
+
+float map( in vec3 p, int oct )
 {
-    vec2 q = vec2( length(p.xz), p.y );
+	vec3 q = p - vec3(0.0,0.1,1.0)*PushConstants.iTime;
+    float g = 0.5+0.5*noise( q*0.3 );
     
-    float b = (r1-r2)/h;
-    float a = sqrt(1.0-b*b);
-    float k = dot(q,vec2(-b,a));
-    
-    if( k < 0.0 ) return length(q) - r1;
-    if( k > a*h ) return length(q-vec2(0.0,h)) - r2;
-        
-    return dot(q, vec2(a,b) ) - r1;
-}
-
-float sdRoundCone(vec3 p, vec3 a, vec3 b, float r1, float r2)
-{
-    // sampling independent computations (only depend on shape)
-    vec3  ba = b - a;
-    float l2 = dot(ba,ba);
-    float rr = r1 - r2;
-    float a2 = l2 - rr*rr;
-    float il2 = 1.0/l2;
-    
-    // sampling dependant computations
-    vec3 pa = p - a;
-    float y = dot(pa,ba);
-    float z = y - l2;
-    float x2 = dot2( pa*l2 - ba*y );
-    float y2 = y*y*l2;
-    float z2 = z*z*l2;
-
-    // single square root!
-    float k = sign(rr)*rr*rr*x2;
-    if( sign(z)*a2*z2 > k ) return  sqrt(x2 + z2)        *il2 - r2;
-    if( sign(y)*a2*y2 < k ) return  sqrt(x2 + y2)        *il2 - r1;
-                            return (sqrt(x2*a2*il2)+y*rr)*il2 - r1;
-}
-
-float sdTriPrism( vec3 p, vec2 h )
-{
-    const float k = sqrt(3.0);
-    h.x *= 0.5*k;
-    p.xy /= h.x;
-    p.x = abs(p.x) - 1.0;
-    p.y = p.y + 1.0/k;
-    if( p.x+k*p.y>0.0 ) p.xy=vec2(p.x-k*p.y,-k*p.x-p.y)/2.0;
-    p.x -= clamp( p.x, -2.0, 0.0 );
-    float d1 = length(p.xy)*sign(-p.y)*h.x;
-    float d2 = abs(p.z)-h.y;
-    return length(max(vec2(d1,d2),0.0)) + min(max(d1,d2), 0.);
-}
-
-// vertical
-float sdCylinder( vec3 p, vec2 h )
-{
-    vec2 d = abs(vec2(length(p.xz),p.y)) - h;
-    return min(max(d.x,d.y),0.0) + length(max(d,0.0));
-}
-
-// arbitrary orientation
-float sdCylinder(vec3 p, vec3 a, vec3 b, float r)
-{
-    vec3 pa = p - a;
-    vec3 ba = b - a;
-    float baba = dot(ba,ba);
-    float paba = dot(pa,ba);
-
-    float x = length(pa*baba-ba*paba) - r*baba;
-    float y = abs(paba-baba*0.5)-baba*0.5;
-    float x2 = x*x;
-    float y2 = y*y*baba;
-    float d = (max(x,y)<0.0)?-min(x2,y2):(((x>0.0)?x2:0.0)+((y>0.0)?y2:0.0));
-    return sign(d)*sqrt(abs(d))/baba;
-}
-
-// vertical
-float sdCone( in vec3 p, in vec2 c, float h )
-{
-    vec2 q = h*vec2(c.x,-c.y)/c.y;
-    vec2 w = vec2( length(p.xz), p.y );
-    
-	vec2 a = w - q*clamp( dot(w,q)/dot(q,q), 0.0, 1.0 );
-    vec2 b = w - q*vec2( clamp( w.x/q.x, 0.0, 1.0 ), 1.0 );
-    float k = sign( q.y );
-    float d = min(dot( a, a ),dot(b, b));
-    float s = max( k*(w.x*q.y-w.y*q.x),k*(w.y-q.y)  );
-	return sqrt(d)*sign(s);
-}
-
-float sdCappedCone( in vec3 p, in float h, in float r1, in float r2 )
-{
-    vec2 q = vec2( length(p.xz), p.y );
-    
-    vec2 k1 = vec2(r2,h);
-    vec2 k2 = vec2(r2-r1,2.0*h);
-    vec2 ca = vec2(q.x-min(q.x,(q.y < 0.0)?r1:r2), abs(q.y)-h);
-    vec2 cb = q - k1 + k2*clamp( dot(k1-q,k2)/dot2(k2), 0.0, 1.0 );
-    float s = (cb.x < 0.0 && ca.y < 0.0) ? -1.0 : 1.0;
-    return s*sqrt( min(dot2(ca),dot2(cb)) );
-}
-
-float sdCappedCone(vec3 p, vec3 a, vec3 b, float ra, float rb)
-{
-    float rba  = rb-ra;
-    float baba = dot(b-a,b-a);
-    float papa = dot(p-a,p-a);
-    float paba = dot(p-a,b-a)/baba;
-
-    float x = sqrt( papa - paba*paba*baba );
-
-    float cax = max(0.0,x-((paba<0.5)?ra:rb));
-    float cay = abs(paba-0.5)-0.5;
-
-    float k = rba*rba + baba;
-    float f = clamp( (rba*(x-ra)+paba*baba)/k, 0.0, 1.0 );
-
-    float cbx = x-ra - f*rba;
-    float cby = paba - f;
-    
-    float s = (cbx < 0.0 && cay < 0.0) ? -1.0 : 1.0;
-    
-    return s*sqrt( min(cax*cax + cay*cay*baba,
-                       cbx*cbx + cby*cby*baba) );
-}
-
-// c is the sin/cos of the desired cone angle
-float sdSolidAngle(vec3 pos, vec2 c, float ra)
-{
-    vec2 p = vec2( length(pos.xz), pos.y );
-    float l = length(p) - ra;
-	float m = length(p - c*clamp(dot(p,c),0.0,ra) );
-    return max(l,m*sign(c.y*p.x-c.x*p.y));
-}
-
-float sdOctahedron(vec3 p, float s)
-{
-    p = abs(p);
-    float m = p.x + p.y + p.z - s;
-
-    // exact distance
-    #if 0
-    vec3 o = min(3.0*p - m, 0.0);
-    o = max(6.0*p - m*2.0 - o*3.0 + (o.x+o.y+o.z), 0.0);
-    return length(p - s*o/(o.x+o.y+o.z));
+	float f;
+    f  = 0.50000*noise( q ); q = q*2.02;
+    #if USE_LOD==1
+    if( oct>=2 ) 
     #endif
-    
-    // exact distance
-    #if 1
- 	vec3 q;
-         if( 3.0*p.x < m ) q = p.xyz;
-    else if( 3.0*p.y < m ) q = p.yzx;
-    else if( 3.0*p.z < m ) q = p.zxy;
-    else return m*0.57735027;
-    float k = clamp(0.5*(q.z-q.y+s),0.0,s); 
-    return length(vec3(q.x,q.y-s+k,q.z-k)); 
+    f += 0.25000*noise( q ); q = q*2.23;
+    #if USE_LOD==1
+    if( oct>=3 )
     #endif
-    
-    // bound, not exact
-    #if 0
-	return m*0.57735027;
+    f += 0.12500*noise( q ); q = q*2.41;
+    #if USE_LOD==1
+    if( oct>=4 )
     #endif
+    f += 0.06250*noise( q ); q = q*2.62;
+    #if USE_LOD==1
+    if( oct>=5 )
+    #endif
+    f += 0.03125*noise( q ); 
+    
+    f = mix( f*0.1-0.75, f, g*g ) + 0.1;
+    return 1.5*f - 0.5 - p.y;
 }
 
-float sdPyramid( in vec3 p, in float h )
+const vec3 sundir = normalize( vec3(-1.0,0.0,-1.0) );
+const int kDiv = 1; // make bigger for higher quality
+
+vec4 raymarch( in vec3 ro, in vec3 rd, in vec3 bgcol, in ivec2 px )
 {
-    float m2 = h*h + 0.25;
-    
-    // symmetry
-    p.xz = abs(p.xz);
-    p.xz = (p.z>p.x) ? p.zx : p.xz;
-    p.xz -= 0.5;
-	
-    // project into face plane (2D)
-    vec3 q = vec3( p.z, h*p.y - 0.5*p.x, h*p.x + 0.5*p.y);
-   
-    float s = max(-q.x,0.0);
-    float t = clamp( (q.y-0.5*p.z)/(m2+0.25), 0.0, 1.0 );
-    
-    float a = m2*(q.x+s)*(q.x+s) + q.y*q.y;
-	float b = m2*(q.x+0.5*t)*(q.x+0.5*t) + (q.y-m2*t)*(q.y-m2*t);
-    
-    float d2 = min(q.y,-q.x*m2-q.y*0.5) > 0.0 ? 0.0 : min(a,b);
-    
-    // recover 3D and scale, and add sign
-    return sqrt( (d2+q.z*q.z)/m2 ) * sign(max(q.z,-p.y));;
-}
+    // bounding planes	
+    const float yb = -3.0;
+    const float yt =  0.6;
+    float tb = (yb-ro.y)/rd.y;
+    float tt = (yt-ro.y)/rd.t;
 
-// la,lb=semi axis, h=height, ra=corner
-float sdRhombus(vec3 p, float la, float lb, float h, float ra)
-{
-    p = abs(p);
-    vec2 b = vec2(la,lb);
-    float f = clamp( (ndot(b,b-2.0*p.xz))/dot(b,b), -1.0, 1.0 );
-	vec2 q = vec2(length(p.xz-0.5*b*vec2(1.0-f,1.0+f))*sign(p.x*b.y+p.z*b.x-b.x*b.y)-ra, p.y-h);
-    return min(max(q.x,q.y),0.0) + length(max(q,0.0));
-}
-
-//------------------------------------------------------------------
-
-vec2 opU( vec2 d1, vec2 d2 )
-{
-	return (d1.x<d2.x) ? d1 : d2;
-}
-
-//------------------------------------------------------------------
-
-#define ZERO (min(0,0))
-
-//------------------------------------------------------------------
-
-vec2 map( in vec3 pos )
-{
-    vec2 res = vec2( 1e10, 0.0 );
-
+    // find tigthest possible raymarching segment
+    float tmin, tmax;
+    if( ro.y>yt )
     {
-      res = opU( res, vec2( sdSphere(    pos-vec3(-2.0,0.25, 0.0), 0.25 ), 26.9 ) );
+        // above top plane
+        if( tt<0.0 ) return vec4(0.0); // early exit
+        tmin = tt;
+        tmax = tb;
     }
-
-    // bounding box
-    if( sdBox( pos-vec3(0.0,0.3,-1.0),vec3(0.35,0.3,2.5) )<res.x )
+    else
     {
-    // more primitives
-    res = opU( res, vec2( sdBoundingBox( pos-vec3( 0.0,0.25, 0.0), vec3(0.3,0.25,0.2), 0.025 ), 16.9 ) );
-	res = opU( res, vec2( sdTorus(      (pos-vec3( 0.0,0.30, 1.0)).xzy, vec2(0.25,0.05) ), 25.0 ) );
-	res = opU( res, vec2( sdCone(        pos-vec3( 0.0,0.45,-1.0), vec2(0.6,0.8),0.45 ), 55.0 ) );
-    res = opU( res, vec2( sdCappedCone(  pos-vec3( 0.0,0.25,-2.0), 0.25, 0.25, 0.1 ), 13.67 ) );
-    res = opU( res, vec2( sdSolidAngle(  pos-vec3( 0.0,0.00,-3.0), vec2(3,4)/5.0, 0.4 ), 49.13 ) );
-    }
-
-    // bounding box
-    if( sdBox( pos-vec3(1.0,0.3,-1.0),vec3(0.35,0.3,2.5) )<res.x )
-    {
-    // more primitives
-	res = opU( res, vec2( sdCappedTorus((pos-vec3( 1.0,0.30, 1.0))*vec3(1,-1,1), vec2(0.866025,-0.5), 0.25, 0.05), 8.5) );
-    res = opU( res, vec2( sdBox(         pos-vec3( 1.0,0.25, 0.0), vec3(0.3,0.25,0.1) ), 3.0 ) );
-    res = opU( res, vec2( sdCapsule(     pos-vec3( 1.0,0.00,-1.0),vec3(-0.1,0.1,-0.1), vec3(0.2,0.4,0.2), 0.1  ), 31.9 ) );
-	res = opU( res, vec2( sdCylinder(    pos-vec3( 1.0,0.25,-2.0), vec2(0.15,0.25) ), 8.0 ) );
-    res = opU( res, vec2( sdHexPrism(    pos-vec3( 1.0,0.2,-3.0), vec2(0.2,0.05) ), 18.4 ) );
-    }
-
-    // bounding box
-    if( sdBox( pos-vec3(-1.0,0.35,-1.0),vec3(0.35,0.35,2.5))<res.x )
-    {
-    // more primitives
-	res = opU( res, vec2( sdPyramid(    pos-vec3(-1.0,-0.6,-3.0), 1.0 ), 13.56 ) );
-	res = opU( res, vec2( sdOctahedron( pos-vec3(-1.0,0.15,-2.0), 0.35 ), 23.56 ) );
-    res = opU( res, vec2( sdTriPrism(   pos-vec3(-1.0,0.15,-1.0), vec2(0.3,0.05) ),43.5 ) );
-    res = opU( res, vec2( sdEllipsoid(  pos-vec3(-1.0,0.25, 0.0), vec3(0.2, 0.25, 0.05) ), 43.17 ) );
-	res = opU( res, vec2( sdRhombus(   (pos-vec3(-1.0,0.34, 1.0)).xzy, 0.15, 0.25, 0.04, 0.08 ),17.0 ) );
-    }
-
-    // bounding box
-    if( sdBox( pos-vec3(2.0,0.3,-1.0),vec3(0.35,0.3,2.5) )<res.x )
-    {
-    // more primitives
-    res = opU( res, vec2( sdOctogonPrism(pos-vec3( 2.0,0.2,-3.0), 0.2, 0.05), 51.8 ) );
-    res = opU( res, vec2( sdCylinder(    pos-vec3( 2.0,0.15,-2.0), vec3(0.1,-0.1,0.0), vec3(-0.2,0.35,0.1), 0.08), 31.2 ) );
-	res = opU( res, vec2( sdCappedCone(  pos-vec3( 2.0,0.10,-1.0), vec3(0.1,0.0,0.0), vec3(-0.2,0.40,0.1), 0.15, 0.05), 46.1 ) );
-    res = opU( res, vec2( sdRoundCone(   pos-vec3( 2.0,0.15, 0.0), vec3(0.1,0.0,0.0), vec3(-0.1,0.35,0.1), 0.15, 0.05), 51.7 ) );
-    res = opU( res, vec2( sdRoundCone(   pos-vec3( 2.0,0.20, 1.0), 0.2, 0.1, 0.3 ), 37.0 ) );
+        // inside clouds slabs
+        tmin = 0.0;
+        tmax = 60.0;
+        if( tt>0.0 ) tmax = min( tmax, tt );
+        if( tb>0.0 ) tmax = min( tmax, tb );
     }
     
-    return res;
-}
-
-// http://iquilezles.org/www/articles/boxfunctions/boxfunctions.htm
-vec2 iBox( in vec3 ro, in vec3 rd, in vec3 rad ) 
-{
-    vec3 m = 1.0/rd;
-    vec3 n = m*ro;
-    vec3 k = abs(m)*rad;
-    vec3 t1 = -n - k;
-    vec3 t2 = -n + k;
-	return vec2( max( max( t1.x, t1.y ), t1.z ),
-	             min( min( t2.x, t2.y ), t2.z ) );
-}
-
-vec2 raycast( in vec3 ro, in vec3 rd )
-{
-    vec2 res = vec2(-1.0,-1.0);
-
-    float tmin = 1.0;
-    float tmax = 20.0;
-
-    // raytrace floor plane
-    float tp1 = (0.0-ro.y)/rd.y;
-    if( tp1>0.0 )
-    {
-        tmax = min( tmax, tp1 );
-        res = vec2( tp1, 1.0 );
-    }
-    //else return res;
+    // dithered near distance
+    float t = tmin + 0.1*noise(vec3(px&1023, 0));
     
-    // raymarch primitives   
-    vec2 tb = iBox( ro-vec3(0.0,0.4,-0.5), rd, vec3(2.5,0.41,3.0) );
-    if( tb.x<tb.y && tb.y>0.0 && tb.x<tmax)
+    // raymarch loop
+	vec4 sum = vec4(0.0);
+    for( int i=0; i<190*kDiv; i++ )
     {
-        //return vec2(tb.x,2.0);
-        tmin = max(tb.x,tmin);
-        tmax = min(tb.y,tmax);
+       // step size
+       float dt = max(0.05,0.02*t/float(kDiv));
 
-        float t = tmin;
-        for( int i=0; i<70 && t<tmax; i++ )
-        {
-            vec2 h = map( ro+rd*t );
-            if( abs(h.x)<(0.0001*t) )
-            { 
-                res = vec2(t,h.y); 
-                break;
-            }
-            t += h.x;
-        }
-    }
-    
-    return res;
-}
-
-// http://iquilezles.org/www/articles/rmshadows/rmshadows.htm
-float calcSoftshadow( in vec3 ro, in vec3 rd, in float mint, in float tmax )
-{
-    // bounding volume
-    float tp = (0.8-ro.y)/rd.y; if( tp>0.0 ) tmax = min( tmax, tp );
-
-    float res = 1.0;
-    float t = mint;
-    for( int i=ZERO; i<24; i++ )
-    {
-		float h = map( ro + rd*t ).x;
-        float s = clamp(8.0*h/t,0.0,1.0);
-        res = min( res, s*s*(3.0-2.0*s) );
-        t += clamp( h, 0.02, 0.2 );
-        if( res<0.004 || t>tmax ) break;
-    }
-    return clamp( res, 0.0, 1.0 );
-}
-
-// http://iquilezles.org/www/articles/normalsSDF/normalsSDF.htm
-vec3 calcNormal( in vec3 pos )
-{
-#if 0
-    vec2 e = vec2(1.0,-1.0)*0.5773*0.0005;
-    return normalize( e.xyy*map( pos + e.xyy ).x + 
-					  e.yyx*map( pos + e.yyx ).x + 
-					  e.yxy*map( pos + e.yxy ).x + 
-					  e.xxx*map( pos + e.xxx ).x );
-#else
-    // inspired by tdhooper and klems - a way to prevent the compiler from inlining map() 4 times
-    vec3 n = vec3(0.0);
-    for( int i=ZERO; i<4; i++ )
-    {
-        vec3 e = 0.5773*(2.0*vec3((((i+3)>>1)&1),((i>>1)&1),(i&1))-1.0);
-        n += e*map(pos+0.0005*e).x;
-      //if( n.x+n.y+n.z>100.0 ) break;
-    }
-    return normalize(n);
-#endif    
-}
-
-float calcAO( in vec3 pos, in vec3 nor )
-{
-	float occ = 0.0;
-    float sca = 1.0;
-    for( int i=ZERO; i<5; i++ )
-    {
-        float h = 0.01 + 0.12*float(i)/4.0;
-        float d = map( pos + h*nor ).x;
-        occ += (h-d)*sca;
-        sca *= 0.95;
-        if( occ>0.35 ) break;
-    }
-    return clamp( 1.0 - 3.0*occ, 0.0, 1.0 ) * (0.5+0.5*nor.y);
-}
-
-// http://iquilezles.org/www/articles/checkerfiltering/checkerfiltering.htm
-float checkersGradBox( in vec2 p, in vec2 dpdx, in vec2 dpdy )
-{
-    // filter kernel
-    vec2 w = abs(dpdx)+abs(dpdy) + 0.001;
-    // analytical integral (box filter)
-    vec2 i = 2.0*(abs(fract((p-0.5*w)*0.5)-0.5)-abs(fract((p+0.5*w)*0.5)-0.5))/w;
-    // xor pattern
-    return 0.5 - 0.5*i.x*i.y;                  
-}
-
-vec3 render( in vec3 ro, in vec3 rd, in vec3 rdx, in vec3 rdy )
-{ 
-    // background
-    vec3 col = vec3(0.7, 0.7, 0.9) - max(rd.y,0.0)*0.3;
-    
-    // raycast scene
-    vec2 res = raycast(ro,rd);
-    float t = res.x;
-	float m = res.y;
-    if( m>-0.5 )
-    {
-        vec3 pos = ro + t*rd;
-        vec3 nor = (m<1.5) ? vec3(0.0,1.0,0.0) : calcNormal( pos );
-        vec3 ref = reflect( rd, nor );
-        
-        // material        
-        col = 0.2 + 0.2*sin( m*2.0 + vec3(0.0,1.0,2.0) );
-        float ks = 1.0;
-        
-        if( m<1.5 )
-        {
-            // project pixel footprint into the plane
-            vec3 dpdx = ro.y*(rd/rd.y-rdx/rdx.y);
-            vec3 dpdy = ro.y*(rd/rd.y-rdy/rdy.y);
-
-            float f = checkersGradBox( 3.0*pos.xz, 3.0*dpdx.xz, 3.0*dpdy.xz );
-            col = 0.15 + f*vec3(0.05);
-            ks = 0.4;
-        }
-
-        // lighting
-        float occ = calcAO( pos, nor );
-        
-		vec3 lin = vec3(0.0);
-
-        // sun
-        {
-            vec3  lig = normalize( vec3(-0.5, 0.4, -0.6) );
-            vec3  hal = normalize( lig-rd );
-            float dif = clamp( dot( nor, lig ), 0.0, 1.0 );
-          //if( dif>0.0001 )
-        	      dif *= calcSoftshadow( pos, lig, 0.02, 2.5 );
-			float spe = pow( clamp( dot( nor, hal ), 0.0, 1.0 ),16.0);
-                  spe *= dif;
-                  spe *= 0.04+0.96*pow(clamp(1.0-dot(hal,lig),0.0,1.0),5.0);
-            lin += col*2.20*dif*vec3(1.30,1.00,0.70);
-            lin +=     5.00*spe*vec3(1.30,1.00,0.70)*ks;
-        }
-        // sky
-        {
-            float dif = sqrt(clamp( 0.5+0.5*nor.y, 0.0, 1.0 ));
-                  dif *= occ;
-            float spe = smoothstep( -0.2, 0.2, ref.y );
-                  spe *= dif;
-                  spe *= 0.04+0.96*pow(clamp(1.0+dot(nor,rd),0.0,1.0), 5.0 );
-          //if( spe>0.001 )
-                  spe *= calcSoftshadow( pos, ref, 0.02, 2.5 );
-            lin += col*0.60*dif*vec3(0.40,0.60,1.15);
-            lin +=     2.00*spe*vec3(0.40,0.60,1.30)*ks;
-        }
-        // back
-        {
-        	float dif = clamp( dot( nor, normalize(vec3(0.5,0.0,0.6))), 0.0, 1.0 )*clamp( 1.0-pos.y,0.0,1.0);
-                  dif *= occ;
-        	lin += col*0.55*dif*vec3(0.25,0.25,0.25);
-        }
-        // sss
-        {
-            float dif = pow(clamp(1.0+dot(nor,rd),0.0,1.0),2.0);
-                  dif *= occ;
-        	lin += col*0.25*dif*vec3(1.00,1.00,1.00);
-        }
-        
-		col = lin;
-
-        col = mix( col, vec3(0.7,0.7,0.9), 1.0-exp( -0.0001*t*t*t ) );
+       // lod
+       #if USE_LOD==0
+       const int oct = 5;
+       #else
+       int oct = 5 - int( log2(1.0+t*0.5) );
+       #endif
+       
+       // sample cloud
+       vec3 pos = ro + t*rd;
+       float den = map( pos,oct );
+       if( den>0.01 ) // if inside
+       {
+           // do lighting
+           float dif = clamp((den - map(pos+0.3*sundir,oct))/0.3, 0.0, 1.0 );
+           vec3  lin = vec3(0.65,0.65,0.75)*1.1 + 0.8*vec3(1.0,0.6,0.3)*dif;
+           vec4  col = vec4( mix( vec3(1.0,0.95,0.8), vec3(0.25,0.3,0.35), den ), den );
+           col.xyz *= lin;
+           // fog
+           col.xyz = mix(col.xyz,bgcol, 1.0-exp2(-0.075*t));
+           // composite front to back
+           col.w    = min(col.w*8.0*dt,1.0);
+           col.rgb *= col.a;
+           sum += col*(1.0-sum.a);
+       }
+       // advance ray
+       t += dt;
+       // until far clip or full opacity
+       if( t>tmax || sum.a>0.99 ) break;
     }
 
-	return vec3( clamp(col,0.0,1.0) );
+    return clamp( sum, 0.0, 1.0 );
 }
 
 mat3 setCamera( in vec3 ro, in vec3 ta, float cr )
@@ -603,61 +250,42 @@ mat3 setCamera( in vec3 ro, in vec3 ta, float cr )
 	vec3 cw = normalize(ta-ro);
 	vec3 cp = vec3(sin(cr), cos(cr),0.0);
 	vec3 cu = normalize( cross(cw,cp) );
-	vec3 cv =          ( cross(cu,cw) );
+	vec3 cv = normalize( cross(cu,cw) );
     return mat3( cu, cv, cw );
 }
 
+vec4 render( in vec3 ro, in vec3 rd, in ivec2 px )
+{
+	float sun = clamp( dot(sundir,rd), 0.0, 1.0 );
+
+    // background sky
+    vec3 col = vec3(0.76,0.75,0.86);
+    col -= 0.6*vec3(0.90,0.75,0.95)*rd.y;
+	col += 0.2*vec3(1.00,0.60,0.10)*pow( sun, 8.0 );
+
+    // clouds    
+    vec4 res = raymarch( ro, rd, col, px );
+    col = col*(1.0-res.w) + res.xyz;
+    
+    // sun glare    
+	col += 0.2*vec3(1.0,0.4,0.2)*pow( sun, 3.0 );
+
+    // tonemap
+    col = smoothstep(0.15,1.1,col);
+ 
+    return vec4( col, 1.0 );
+}
 
 void main() {
-	vec2 uv = (2.0*v_FragPos-iResolution.xy)/iResolution.y;
+    vec2 p = (2.0*v_FragPos-PushConstants.iResolution.xy)/PushConstants.iResolution.y;
+    vec2 m =                1.0      /PushConstants.iResolution.xy;
 
-    vec2 mo = 1/iResolution.xy;
-	float time = 32.0 + push.iTime * 1.5;
-
-    // camera	
-    vec3 ta = vec3( 0.5, -0.5, -0.6 );
-    vec3 ro = ta + vec3( 4.5*cos(0.1*time + 7.0*mo.x), 1.3 + 2.0*mo.y, 4.5*sin(0.1*time + 7.0*mo.x) );
-    // camera-to-world transformation
-    mat3 ca = setCamera( ro, ta, 0.0 );
-
-    vec3 tot = vec3(0.0);
-#if AA>1
-    for( int m=ZERO; m<AA; m++ )
-    for( int n=ZERO; n<AA; n++ )
-    {
-        // pixel coordinates
-        vec2 o = vec2(float(m),float(n)) / float(AA) - 0.5;
-        vec2 p = (2.0*(v_FragPos+o)-iResolution.xy)/iResolution.y;
-#else    
-        vec2 p = (2.0*v_FragPos-iResolution.xy)/iResolution.y;
-#endif
-
-        // focal length
-        const float fl = 2.5;
-        
-        // ray direction
-        vec3 rd = ca * normalize( vec3(p,fl) );
-
-         // ray differentials
-        vec2 px = (2.0*(v_FragPos+vec2(1.0,0.0))-iResolution.xy)/iResolution.y;
-        vec2 py = (2.0*(v_FragPos+vec2(0.0,1.0))-iResolution.xy)/iResolution.y;
-        vec3 rdx = ca * normalize( vec3(px,fl) );
-        vec3 rdy = ca * normalize( vec3(py,fl) );
-        
-        // render	
-        vec3 col = render( ro, rd, rdx, rdy );
-
-        // gain
-        // col = col*3.0/(2.5+col);
-        
-		// gamma
-        col = pow( col, vec3(0.4545) );
-
-        tot += col;
-#if AA>1
-    }
-    tot /= float(AA*AA);
-#endif
+    // camera
+    vec3 ro = 4.0*normalize(vec3(sin(3.0*m.x), 0.8*m.y, cos(3.0*m.x))) - vec3(0.0,0.1,0.0);
+	vec3 ta = vec3(0.0, -1.0, 0.0);
+    mat3 ca = setCamera( ro, ta, 0.07*cos(0.25*PushConstants.iTime) );
+    // ray
+    vec3 rd = ca * normalize( vec3(p.xy,1.5));
     
-    color = vec4( tot, 1.0 );
+    color = render( ro, rd, ivec2(v_FragPos-0.5) );
 }

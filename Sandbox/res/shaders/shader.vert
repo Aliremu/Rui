@@ -17,8 +17,9 @@ layout(location = 1) out vec2 v_TexCoord;
 layout(location = 3) out vec2 v_FragPos;
 
 layout(push_constant) uniform Push {
+    vec2 iResolution;
     float iTime;
-} push;
+} PushConstants;
 
 void main() {
     v_Color    = vec3(1.0, 0.0, 0.0);
@@ -27,7 +28,7 @@ void main() {
 
     //v_FragPos = vec3(pushConsts.model * ubo.model * vec4(a_Position, 1.0));
     //localPos = pushConsts.model * vec4(localPos, 1.0);
-    v_FragPos = a_Position * vec2(1280, 720);
+    v_FragPos = a_Position * PushConstants.iResolution;
 
     gl_Position = vec4(a_Position * -2.0 + 1.0, 0.0, 1.0);
 }

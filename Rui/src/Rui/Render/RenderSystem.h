@@ -14,6 +14,11 @@ namespace Rui {
             glm::mat4 Proj;
         };
 
+        struct PushConstants {
+            glm::vec2 iResolution;
+            float iTime;
+        };
+
         struct RenderData {
             vk::DescriptorSetLayout DescriptorSetLayout;
 
@@ -31,6 +36,10 @@ namespace Rui {
             vk::DescriptorPool DescriptorPool;
             std::vector<vk::DescriptorSet> DescriptorSets;
 
+            std::vector<uint32_t> indices;
+        	std::vector<Vertex> vertices;
+            vk::Buffer vertexBuffer;
+            vk::Buffer indexBuffer;
 
             uint32_t ImageIndex = 0;
             bool IsFrameStarted = false;

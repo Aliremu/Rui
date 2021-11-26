@@ -106,6 +106,10 @@ namespace Rui {
 		std::vector<vk::PhysicalDevice> devices(count);
 		m_Instance.enumeratePhysicalDevices(&count, devices.data());
 
+		for(auto& it : devices) {
+			RUI_CORE_TRACE("{0}", it.getProperties().deviceName);
+		}
+
 		m_PhysicalDevice = devices[0];
 	}
 

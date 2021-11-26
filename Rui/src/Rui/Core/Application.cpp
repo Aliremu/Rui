@@ -23,7 +23,7 @@ namespace Rui {
 	}
 
 	void Application::Run() {
-		const int tps = 60;
+		const int tps = 75;
 		auto constexpr dt = std::chrono::duration<long long, std::ratio<1, tps>>{ 1 };
 		using duration = decltype(Clock::duration{} + dt);
 		using time_point = std::chrono::time_point<Clock, duration>;

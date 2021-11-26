@@ -39,53 +39,6 @@ namespace Rui {
 
 		auto commandBuffer = s_Data->CommandBuffers[imageIndex];
 
-		/*const std::vector<Vertex> vertices = {
-			{{0.0f, 0.0f}, {1.0f, 0.0f}},
-			{{1.0f, 0.0f}, {0.0f, 1.0f}},
-			{{1.0f, 1.0f}, {0.0f, 0.0f}},
-			{{0.0f, 1.0f}, {1.0f, 1.0f}}
-		};
-
-		std::vector<uint32_t> indices = {
-			0, 1, 2, 2, 3, 0
-		};
-
-		vk::Buffer vertexBuffer;
-		vk::Buffer indexBuffer;
-
-		vk::BufferCreateInfo buffer_info;
-		buffer_info.size = sizeof(vertices[0]) * vertices.size();
-		buffer_info.usage = vk::BufferUsageFlagBits::eVertexBuffer;
-		vma::AllocationCreateInfo create_info;
-		create_info.requiredFlags = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
-
-		vma::AllocationInfo info;
-		vma::Allocation alloc;
-
-		s_Device->m_Allocator.createBuffer(&buffer_info, &create_info, &vertexBuffer, &alloc, &info);
-
-		void* a;
-
-		s_Device->m_Allocator.mapMemory(alloc, &a);
-		memcpy(a, vertices.data(), sizeof(vertices[0]) * vertices.size());
-		s_Device->m_Allocator.unmapMemory(alloc);
-		//------------------------------//
-		vk::BufferCreateInfo buffer_info2;
-		buffer_info2.size = sizeof(indices[0]) * indices.size();
-		buffer_info2.usage = vk::BufferUsageFlagBits::eIndexBuffer;
-		vma::AllocationCreateInfo create_info2;
-		create_info2.requiredFlags = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
-
-		vma::AllocationInfo info2;
-		vma::Allocation alloc2;
-
-		s_Device->m_Allocator.createBuffer(&buffer_info2, &create_info2, &indexBuffer, &alloc2, &info2);
-
-		void* a2;
-
-		s_Device->m_Allocator.mapMemory(alloc2, &a2);
-		memcpy(a2, indices.data(), sizeof(indices[0]) * indices.size());
-		s_Device->m_Allocator.unmapMemory(alloc2);*/
 		const VkDeviceSize offsets[1] = { 0 };
 
 			vk::CommandBufferBeginInfo beginInfo;
@@ -324,7 +277,6 @@ namespace Rui {
 			commandBuffer.beginRenderPass(&renderPassInfo, vk::SubpassContents::eInline);
 
 			s_Data->Pipeline->Bind(commandBuffer);
-			RUI_CORE_TRACE("DRAW SHIT");
 			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, s_Data->PipelineLayout, 0, 1, &s_Data->DescriptorSets[i], 0, nullptr);
 			PushConstants tmp= { {1280.0f, 720.0f}, 0.0f };
 			RUI_CORE_ERROR("Size of PushConstants: {0}", sizeof(PushConstants));

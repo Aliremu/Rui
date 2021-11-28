@@ -42,7 +42,7 @@ layout(push_constant) uniform Push {
 //    http://iquilezles.org/www/articles/distfunctions/distfunctions.htm
 
 #if HW_PERFORMANCE==0
-#define AA 1
+#define AA 2
 #else
 #define AA 2   // make this 2 or 3 for antialiasing
 #endif

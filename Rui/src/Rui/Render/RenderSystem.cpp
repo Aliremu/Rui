@@ -163,7 +163,7 @@ namespace Rui {
 		pipelineConfig->renderPass = s_SwapChain->GetRenderPass();
 		pipelineConfig->pipelineLayout = s_Data->PipelineLayout;
 
-		s_Data->Pipeline = std::make_unique<Pipeline>("res/shaders/shader.vert.spv", "res/shaders/shader.frag.spv", pipelineConfig);
+		s_Data->Pipeline = std::make_unique<Pipeline>("res/shaders/shader.vert.spv", "res/shaders/shader_shapes.frag.spv", pipelineConfig);
 	}
 
 	void RenderSystem::CreateUniformBuffers() {

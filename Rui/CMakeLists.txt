@@ -86,6 +86,7 @@ message(NOTICE "SDL LIB DIR ${PHYSX_LIBRARIES}")
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/Rui/src ${CMAKE_SOURCE_DIR}/Rui/vendor/spdlog/include ${CMAKE_SOURCE_DIR}/Rui/vendor/entt/single_include ${CMAKE_SOURCE_DIR}/Rui/vendor/glm ${CMAKE_SOURCE_DIR}/Rui/vendor/vma-hpp ${Vulkan_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS} ${PHYSX_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC ${Vulkan_LIBRARIES} SDL2main SDL2 glm::glm ${PHYSX_LIBRARIES})
 target_compile_definitions(${PROJECT_NAME} PRIVATE RUI_PLATFORM_WINDOWS RUI_BUILD_DLL RUI_ENABLE_ASSERTS)
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 target_precompile_headers(${PROJECT_NAME} PUBLIC src/ruipch.h)
 
 install(TARGETS ${PROJECT_NAME}

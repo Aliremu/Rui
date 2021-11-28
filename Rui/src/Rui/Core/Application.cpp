@@ -31,7 +31,11 @@ namespace Rui {
 		time_point t{};
 
 		time_point currentTime = Clock::now();
+		time_point fpsTime = Clock::now();
+
 		duration accumulator = 0s;
+
+		int fpsCount = 0;
 
 		while(m_Running) {
 			m_Window->OnUpdate();
@@ -55,6 +59,12 @@ namespace Rui {
 			const double alpha = std::chrono::duration<double>{ accumulator } / dt;
 
 			//State state = currentState * alpha + previousState * (1 - alpha);
+			fpsCount++;
+			if (newTime - fpsTime >= 1000ms) {
+				RUI_CORE_INFO("FPS: {0}", fpsCount);
+				fpsCount = 0;
+				fpsTime = newTime;
+			}
 			ts.m_Interpolation = alpha;
 			m_Scene->OnRender(ts);
 		}

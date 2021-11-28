@@ -83,7 +83,7 @@ endif()
 message(NOTICE "SDL LIB DIR ${PHYSX_LIBRARIES}")
 
 #add_library(${PROJECT_NAME} SHARED src/Rui/Core.h src/Rui/EntryPoint.h src/Rui/Application.cpp src/Rui/Application.h src/Rui/Log.cpp src/Rui/Log.h src/Events/Event.h src/Events/KeyEvent.h src/Events/MouseEvent.h src/Events/TickEvent.h src/Events/WindowEvent.h src/Events/Listener.h src/Rui.h)
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/Rui/src ${CMAKE_SOURCE_DIR}/Rui/vendor/spdlog/include ${CMAKE_SOURCE_DIR}/Rui/vendor/glm ${CMAKE_SOURCE_DIR}/Rui/vendor/vma-hpp ${Vulkan_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS} ${PHYSX_INCLUDE_DIRS})
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/Rui/src ${CMAKE_SOURCE_DIR}/Rui/vendor/spdlog/include ${CMAKE_SOURCE_DIR}/Rui/vendor/entt/single_include ${CMAKE_SOURCE_DIR}/Rui/vendor/glm ${CMAKE_SOURCE_DIR}/Rui/vendor/vma-hpp ${Vulkan_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS} ${PHYSX_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC ${Vulkan_LIBRARIES} SDL2main SDL2 glm::glm ${PHYSX_LIBRARIES})
 target_compile_definitions(${PROJECT_NAME} PRIVATE RUI_PLATFORM_WINDOWS RUI_BUILD_DLL RUI_ENABLE_ASSERTS)
 target_precompile_headers(${PROJECT_NAME} PUBLIC src/ruipch.h)

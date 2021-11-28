@@ -2,6 +2,8 @@
 #include "Timestep.h"
 #include "Rui/Events/Event.h"
 
+#include <entt/entt.hpp>
+
 namespace Rui {
 	class Scene {
 	public:
@@ -14,6 +16,9 @@ namespace Rui {
 		virtual void OnUpdate(const Timestep& ts) = 0;
 		virtual void OnRender(const Timestep& ts) = 0;
 		virtual void OnEvent(Event& event) = 0;
+
+	private:
+		entt::registry m_Registry;
 	};
 }
 

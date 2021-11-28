@@ -96,7 +96,7 @@ public:
     void OnUpdate(const Rui::Timestep& ts) override {
         //RUI_TRACE("{0}s Timestep", 1);
         
-        gScene->simulate((PxReal) ts.m_dt);
+        gScene->simulate(static_cast<PxReal>(ts.m_dt));
         gScene->fetchResults(true);
     }
 
@@ -111,7 +111,7 @@ public:
 class Sandbox : public Rui::Application {
 public:
 	
-	Sandbox() : Rui::Application("Hello College Person :)", 1280, 720) {
+	Sandbox() : Rui::Application("Hello College Admissions Person :)", 1280, 720) {
 		LoadScene(new GameScene());
 	}
 

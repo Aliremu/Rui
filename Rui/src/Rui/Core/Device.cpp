@@ -55,12 +55,10 @@ namespace Rui {
 		vk::ApplicationInfo app_info(
 			Application::Get().GetDisplay().GetTitle().c_str(),
 			VK_MAKE_VERSION(1, 0, 0),
-			RUI_ENGINE,
-			RUI_VERSION,
-			VK_VERSION_1_2
+			RUI_ENGINE_NAME,
+			RUI_ENGINE_VERSION,
+			VK_API_VERSION_1_2
 		);
-
-		
 
 		std::vector<const char*> extensions = GetRequiredExtensions();
 
@@ -111,6 +109,7 @@ namespace Rui {
 		}
 
 		m_PhysicalDevice = devices[0];
+		RUI_CORE_TRACE("Chosen Device: {0} - {1}", m_PhysicalDevice.getProperties().deviceID, m_PhysicalDevice.getProperties().deviceName);
 	}
 
 	void Device::CreateLogicalDevice() {

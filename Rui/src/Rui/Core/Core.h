@@ -13,8 +13,8 @@
 	#define RUI_CORE_ASSERT(x, ...)
 #endif
 
-#define RUI_ENGINE "Rui"
-#define RUI_VERSION VK_MAKE_VERSION(1, 0, 0)
+#define RUI_ENGINE_NAME "Rui"
+#define RUI_ENGINE_VERSION VK_MAKE_VERSION(1, 0, 0)
 
 #define BIT(x) (1 << x)
 
